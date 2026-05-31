@@ -2,7 +2,7 @@ name: astrbot_plugin_yt_dlp # 插件唯一识别名，以 astrbot_plugin_ 前缀
 # 插件名称（给人看的）
 display_name: 全能视频直链提取器
 # 描述
-description: 基于本地 yt-dlp 的全能视频解析插件，支持油管、B站等。
+description: 基于本地 yt_dlp 的全能视频解析插件，支持油管、B站等。
 # 版本号
 version: 1.0.1
 # 作者
