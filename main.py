@@ -214,7 +214,18 @@ class YtDlpPlugin(Star):
         })
         def _task():
             with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
+                try:
+                    info = ydl.extract_info(url, download=True)
+                except Exception as e:
+                    err = str(e)
+                    if "Requested format is not available" in err or "no format" in err.lower():
+                        self._dbg("下载", f"格式不可用, 降级到 best: {err[:100]}")
+                        opts2 = dict(opts)
+                        opts2["format"] = "best"
+                        with yt_dlp.YoutubeDL(opts2) as ydl2:
+                            info = ydl2.extract_info(url, download=True)
+                    else:
+                        raise
                 fn = ydl.prepare_filename(info)
                 self._dbg("下载", f"✅ {os.path.basename(fn)}")
                 return fn, info
@@ -298,7 +309,7 @@ class YtDlpPlugin(Star):
 
             opts = self._inject({
                 "outtmpl": f"{pf}/%(playlist_index)s_%(title)s.%(ext)s",
-                "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best/best",
                 "quiet": True, "ignoreerrors": True, "noplaylist": False,
                 "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
             })
@@ -340,11 +351,11 @@ class YtDlpPlugin(Star):
 
             limit, h264 = self.max_quality, self.prefer_h264
             if limit == "最高画质":
-                fv = "bestvideo[vcodec^=avc1]/bestvideo[ext=mp4]/bestvideo" if h264 else "bestvideo"
+                fv = "bestvideo[vcodec^=avc1]/bestvideo[ext=mp4]/bestvideo/best" if h264 else "bestvideo/best"
             else:
                 h = int(limit.replace('p',''))
-                fv = f"bestvideo[height<={h}][vcodec^=avc1]" if h264 else f"bestvideo[height<={h}]"
-            fa = "bestaudio[ext=m4a]/bestaudio"
+                fv = f"bestvideo[height<={h}][vcodec^=avc1]/bestvideo[height<={h}]/best" if h264 else f"bestvideo[height<={h}]/best"
+            fa = "bestaudio[ext=m4a]/bestaudio/best"
             self._dbg("核心", f"画质={limit} v={fv} a={fa}")
 
             try:
