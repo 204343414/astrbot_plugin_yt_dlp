@@ -210,7 +210,7 @@ class YtDlpPlugin(Star):
         opts = self._inject({
             "outtmpl": tmpl, "format": fmt, "noplaylist": True,
             "quiet": True, "ffmpeg_location": None,
-            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+            "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         })
         def _task():
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -316,7 +316,7 @@ class YtDlpPlugin(Star):
 
             opts = self._inject({
                 "outtmpl": f"{pf}/%(playlist_index)s_%(title)s.%(ext)s",
-                "format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+                "format": "bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio/best",
                 "quiet": True, "ignoreerrors": True, "noplaylist": False,
                 "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
             })
@@ -358,11 +358,11 @@ class YtDlpPlugin(Star):
 
             limit, h264 = self.max_quality, self.prefer_h264
             if limit == "最高画质":
-                fv = "bestvideo[vcodec^=avc1]/bestvideo[ext=mp4]/bestvideo" if h264 else "bestvideo"
+                fv = "bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio/best"
             else:
                 h = int(limit.replace('p',''))
-                fv = f"bestvideo[height<={h}][vcodec^=avc1]/bestvideo[height<={h}]" if h264 else f"bestvideo[height<={h}]"
-            fa = "bestaudio[ext=m4a]/bestaudio"
+                fv = f"bestvideo[height<={h}]+bestaudio/bestvideo[width<={h}]+bestaudio/bestvideo+bestaudio/best"
+            fa = "bestaudio"
             self._dbg("核心", f"画质={limit} v={fv} a={fa}")
 
             try:
