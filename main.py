@@ -223,13 +223,13 @@ class YtDlpPlugin(Star):
                 except Exception as e:
                     err = str(e)
                     if "Requested format is not available" in err or "no format" in err.lower():
-                        # 智能降级: 视频流→bestvideo, 音频流→bestaudio, 保画质
                         if "bestvideo" in fmt:
                             fb = "bestvideo"
                         elif "bestaudio" in fmt:
-                            fb = "bestaudio"
+                            # bestaudio 不可用 → 用 best (合并流, FFmpeg 从中抽音频)
+                            fb = "best"
                         else:
-                            fb = "bestvideo+bestaudio/best"
+                            fb = "best"
                         self._dbg("下载", f"格式不可用, 降级到 {fb}: {err[:100]}")
                         opts2 = dict(opts)
                         opts2["format"] = fb
