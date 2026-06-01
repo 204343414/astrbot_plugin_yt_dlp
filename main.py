@@ -275,9 +275,6 @@ class YtDlpPlugin(Star):
             url = url.replace("--y", "").replace("  ", " ").strip()
             confirmed = True
 
-        d = self._dbg_chat(event, "📡 步骤1: 解析资源信息...")
-        if d: yield d
-
         yield event.plain_result("⏳ 正在解析资源信息...")
         info = await self._get_video_info_safe(url)
 
@@ -298,9 +295,6 @@ class YtDlpPlugin(Star):
                 f"❌ 重试后仍然失败\n📌 {err_msg[:300]}{hint}\n"
                 f"💡 通用: 1)网站反爬更新 2)网络/代理 3)链接失效")
             return
-
-        d = self._dbg_chat(event, "✅ 解析成功")
-        if d: yield d
 
         ts = int(time.time())
         final_password = None
@@ -397,8 +391,6 @@ class YtDlpPlugin(Star):
 
         fsize_mb = os.path.getsize(final_path) / (1024 * 1024)
         self._dbg("核心", f"文件={os.path.basename(final_path)} {fsize_mb:.1f}MB")
-        d = self._dbg_chat(event, f"📦 文件就绪: {fsize_mb:.1f}MB")
-        if d: yield d
 
         max_limit = 500 if info.get('is_playlist') else self.max_size_mb
         pwd_hint = f"\n🔐 **解压密码: {final_password}**" if final_password else ""
