@@ -12,6 +12,8 @@ import shutil
 import zipfile
 import socket
 import threading
+import json
+import requests
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from astrbot.api.all import *
 from astrbot.api.message_components import Video, Plain, File
@@ -39,11 +41,27 @@ class YtDlpPlugin(Star):
         self.delete_seconds = self.config.get("download", {}).get("auto_delete_seconds", 60)
         self.prefer_h264 = self.config.get("download", {}).get("prefer_h264", True)
         
+        # 审核配置
+        mod_config = self.config.get("moderation", {})
+        self.enable_moderation = mod_config.get("enabled", False)
+        self.moderation_llm_id = mod_config.get("llm_provider_id", 0)
+        
+        # 数据目录
+        self.data_dir = os.path.join(self.plugin_dir, "data")
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
+        
+        self.blocked_videos_file = os.path.join(self.data_dir, "blocked_videos.json")
+        self.banned_users_file = os.path.join(self.data_dir, "banned_users.json")
+        self.blocked_videos = self._load_blocked_videos()
+        self.banned_users = self._load_banned_users()
+        
         self.server_port = 0
         self.server_ip = self._get_local_ip()
         self._start_http_server()
         self.logger.info(f"文件服务器: http://{self.server_ip}:{self.server_port}")
         self.logger.info(f"画质设置: {self.max_quality} | H.264优先: {self.prefer_h264}")
+        self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商ID: {self.moderation_llm_id}")
 
     def _resolve_ffmpeg_exe(self):
         ffmpeg_config = self.config.get("ffmpeg", {})
@@ -96,7 +114,7 @@ class YtDlpPlugin(Star):
     def _sanitize_filename(self, name: str) -> str:
         if not name:
             return "video"
-        name = re.sub(r'[\\/*?:"<>|]', '_', name)
+        name = re.sub(r'[\/\\*?:\"<>|]', '_', name)
         return name.replace('\n', ' ').replace('\r', '')[:100].strip()
 
     def _format_size(self, size_bytes):
@@ -110,6 +128,164 @@ class YtDlpPlugin(Star):
             return f"{size_bytes/1024**2:.2f} MB"
         else:
             return f"{size_bytes/1024**3:.2f} GB"
+
+    def _load_blocked_videos(self):
+        if os.path.exists(self.blocked_videos_file):
+            try:
+                with open(self.blocked_videos_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return set(data.get('videos', []))
+            except:
+                return set()
+        return set()
+
+    def _save_blocked_videos(self):
+        try:
+            with open(self.blocked_videos_file, 'w', encoding='utf-8') as f:
+                json.dump({'videos': list(self.blocked_videos)}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.error(f"保存黑名单失败: {e}")
+
+    def _load_banned_users(self):
+        if os.path.exists(self.banned_users_file):
+            try:
+                with open(self.banned_users_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get('users', {})
+            except:
+                return {}
+        return {}
+
+    def _save_banned_users(self):
+        try:
+            with open(self.banned_users_file, 'w', encoding='utf-8') as f:
+                json.dump({'users': self.banned_users}, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.error(f"保存用户封禁失败: {e}")
+
+    def _get_sender_id(self, event):
+        try:
+            if hasattr(event, 'message_obj'):
+                msg = event.message_obj
+                if getattr(msg, 'user_id', None):
+                    return str(msg.user_id)
+            return str(event.session_id)
+        except:
+            return str(event.session_id)
+
+    def _ban_user(self, user_id, hours=24):
+        ban_until = time.time() + hours * 3600
+        self.banned_users[user_id] = ban_until
+        self._save_banned_users()
+        self.logger.info(f"用户 {user_id} 被封禁 {hours} 小时")
+
+    def _is_user_banned(self, user_id):
+        if user_id in self.banned_users:
+            if time.time() < self.banned_users[user_id]:
+                return True
+            else:
+                del self.banned_users[user_id]
+                self._save_banned_users()
+        return False
+
+    def _add_blocked_video(self, video_key):
+        self.blocked_videos.add(video_key)
+        self._save_blocked_videos()
+        self.logger.info(f"视频 {video_key} 已加入永久黑名单")
+
+    async def _get_full_video_info(self, url):
+        opts = {
+            "quiet": True, "no_warnings": True, "nocheckcertificate": True
+        }
+        if self.proxy_enabled:
+            opts["proxy"] = self.proxy_url
+        try:
+            info = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: yt_dlp.YoutubeDL(opts).extract_info(url, download=False))
+            return info
+        except Exception as e:
+            self.logger.error(f"Full info error: {e}")
+            return None
+
+    def _is_foreign_video(self, info):
+        extractor = str(info.get('extractor', '')).lower()
+        if 'bilibili' in extractor:
+            return False
+        return True
+
+    async def _audit_content(self, info, event):
+        if not self.enable_moderation:
+            return False
+        title = info.get('title', '')
+        description = info.get('description', '') or ''
+        
+        if not self._is_foreign_video(info):
+            return False
+        
+        # LLM 审核标题
+        prompt = f"""你是一个内容审核助手。请判断以下视频是否涉及政治敏感 (如习近平、中共等)、色情、暴力、反动内容。
+只回复 '安全' 或 '危险' 两个字。
+如果内容模糊不清、涉及政治敏感或不确定，默认回复 '危险'。保守优先，宁可误杀不可放过。
+
+标题: {title}
+描述: {description}"""
+        
+        try:
+            provider_id = self.moderation_llm_id
+            if provider_id == 0:
+                provider_id = await self.context.get_current_chat_provider_id(umo=event.unified_msg_origin)
+            
+            llm_resp = await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=prompt
+            )
+            response_text = llm_resp.completion_text.strip().lower()
+            if '危险' in response_text or 'danger' in response_text or '不安全' in response_text:
+                self.logger.info(f"LLM 标题审核判定危险: {title}")
+                return True
+        except Exception as e:
+            self.logger.error(f"LLM 标题审核失败: {e}")
+            return True  # 保守，失败则阻挡
+        
+        # 封面图片审核 (如果有缩略图)
+        thumbnail = info.get('thumbnail')
+        if thumbnail:
+            try:
+                thumb_path = os.path.join(self.temp_dir, f"thumb_audit_{int(time.time())}.jpg")
+                resp = requests.get(thumbnail, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+                if resp.status_code == 200:
+                    with open(thumb_path, 'wb') as f:
+                        f.write(resp.content)
+                    
+                    # 尝试用 image_urls 传递图片进行 vision 审核
+                    image_prompt = """分析这张视频封面图片，判断是否包含色情、暴力、政治敏感、反动内容。
+只回复 '安全' 或 '危险' 两个字。
+如果模糊不清或有敏感元素，默认 '危险'。保守优先。"""
+                    
+                    try:
+                        llm_resp_img = await self.context.llm_generate(
+                            chat_provider_id=provider_id,
+                            prompt=image_prompt,
+                            image_urls=[thumb_path]
+                        )
+                        img_response = llm_resp_img.completion_text.strip().lower()
+                        if '危险' in img_response or 'danger' in img_response:
+                            self.logger.info(f"LLM 封面审核判定危险: {title}")
+                            # 清理缩略图
+                            if os.path.exists(thumb_path):
+                                os.remove(thumb_path)
+                            return True
+                    except Exception as img_e:
+                        self.logger.warning(f"封面 vision 审核失败 (可能提供商不支持图片): {img_e}")
+                        # 如果 vision 失败，只依赖标题
+                    
+                    if os.path.exists(thumb_path):
+                        os.remove(thumb_path)
+            except Exception as e:
+                self.logger.error(f"封面下载或审核失败: {e}")
+        
+        return False
+
     async def _try_update_ytdlp(self):
         self.logger.info("正在尝试自动更新 yt-dlp...")
         def _run_update():
@@ -202,6 +378,29 @@ class YtDlpPlugin(Star):
         if not info:
             yield event.plain_result(f"❌ 无法解析链接，请检查网络或链接有效性。")
             return
+
+        # ==================== 内容审核检查 ====================
+        if self.enable_moderation:
+            sender_id = self._get_sender_id(event)
+            if self._is_user_banned(sender_id):
+                yield event.plain_result("网络不太好，过一会再来吧。")
+                return
+            
+            # 获取完整信息用于审核 (单视频需要)
+            full_info = await self._get_full_video_info(url)
+            if full_info and not full_info.get('_type') == 'playlist':
+                video_key = f"{full_info.get('extractor', 'unknown')}_{full_info.get('id', str(hash(url))[-10:])}"
+                if video_key in self.blocked_videos:
+                    self._ban_user(sender_id)
+                    yield event.plain_result("网络不太好，过一会再来吧。")
+                    return
+                
+                is_bad = await self._audit_content(full_info, event)
+                if is_bad:
+                    self._add_blocked_video(video_key)
+                    self._ban_user(sender_id)
+                    yield event.plain_result("网络不太好，过一会再来吧。")
+                    return
 
         ts = int(time.time())
         final_password = None # 用于最后提示密码
