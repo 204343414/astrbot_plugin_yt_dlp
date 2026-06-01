@@ -29,10 +29,7 @@ class YtDlpPlugin(Star):
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
             
-        try:
-            self.ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-        except:
-            self.ffmpeg_exe = "ffmpeg"
+        self.ffmpeg_exe = self._resolve_ffmpeg_exe()
             
         self.proxy_enabled = self.config.get("proxy", {}).get("enabled", False)
         self.proxy_url = self.config.get("proxy", {}).get("url", "")
@@ -47,6 +44,28 @@ class YtDlpPlugin(Star):
         self._start_http_server()
         self.logger.info(f"文件服务器: http://{self.server_ip}:{self.server_port}")
         self.logger.info(f"画质设置: {self.max_quality} | H.264优先: {self.prefer_h264}")
+
+    def _resolve_ffmpeg_exe(self):
+        ffmpeg_config = self.config.get("ffmpeg", {})
+        custom_path = ffmpeg_config.get("custom_path", "")
+
+        if custom_path:
+            if os.path.exists(custom_path):
+                return custom_path
+            self.logger.warning(f"自定义 FFmpeg 路径不存在: {custom_path}")
+
+        if ffmpeg_config.get("use_builtin", True):
+            try:
+                return imageio_ffmpeg.get_ffmpeg_exe()
+            except Exception as e:
+                self.logger.warning(f"内置 FFmpeg 获取失败: {e}")
+
+        if ffmpeg_config.get("use_system_path", True):
+            system_ffmpeg = shutil.which("ffmpeg")
+            if system_ffmpeg:
+                return system_ffmpeg
+
+        return "ffmpeg"
 
     def _get_local_ip(self):
         try:
@@ -157,7 +176,7 @@ class YtDlpPlugin(Star):
             "format": fmt,
             "noplaylist": True,
             "quiet": True,
-            "ffmpeg_location": None
+            "ffmpeg_location": self.ffmpeg_exe
         }
         if self.proxy_enabled:
             opts["proxy"] = self.proxy_url
@@ -223,6 +242,7 @@ class YtDlpPlugin(Star):
                 "quiet": True,
                 "ignoreerrors": True,
                 "noplaylist": False,
+                "ffmpeg_location": self.ffmpeg_exe,
             }
             if self.proxy_enabled: opts["proxy"] = self.proxy_url
 
@@ -285,7 +305,7 @@ class YtDlpPlugin(Star):
                 fmt_v = "bestvideo[vcodec^=avc1]/bestvideo[ext=mp4]/bestvideo" if prefer_h264 else "bestvideo"
             else:
                 height = int(limit.replace('p', ''))
-                fmt_v = f"bestvideo[height<={height}][vcodec^=avc1]" if prefer_h264 else f"bestvideo[height<={height}]"
+                fmt_v = f"bestvideo[height<={height}][vcodec^=avc1]/bestvideo[height<={height}]" if prefer_h264 else f"bestvideo[height<={height}]"
             fmt_a = "bestaudio[ext=m4a]/bestaudio"
 
             try:
