@@ -70,9 +70,13 @@ class YtDlpPlugin(Star):
             self.logger.info(f"[DEBUG][{step}] {msg}")
             self._debug_buffer.append(f"[{step}] {msg}")
 
-    def _dbg_chat(self, event, msg):
-        if self.debug_mode:
-            return event.plain_result(f"🔍 {msg}")
+    def _flush_debug(self, event):
+        """将收集的 debug 信息一次性发送到聊天窗口"""
+        if self.debug_mode and self._debug_buffer:
+            lines = self._debug_buffer[-30:]  # 最多30条, 避免刷屏
+            text = "🔍 [DEBUG汇总]\n" + "\n".join(f"  {l}" for l in lines)
+            self._debug_buffer.clear()
+            return event.plain_result(text)
         return None
 
     # ======= 基础工具 =======
@@ -288,6 +292,8 @@ class YtDlpPlugin(Star):
         if not info.get('success'):
             err_msg = info.get('error', '?')
             hint = self._analyze_error(err_msg)
+            fdbg = self._flush_debug(event)
+            if fdbg: yield fdbg
             yield event.plain_result(
                 f"❌ 重试后仍然失败\n📌 {err_msg[:300]}{hint}\n"
                 f"💡 通用: 1)网站反爬更新 2)网络/代理 3)链接失效")
@@ -358,10 +364,10 @@ class YtDlpPlugin(Star):
 
             limit, h264 = self.max_quality, self.prefer_h264
             if limit == "最高画质":
-                fv = "bestvideo[height<=2160]+bestaudio/bestvideo+bestaudio/best"
+                fv = "bestvideo[height<=2160]/bestvideo/best"
             else:
                 h = int(limit.replace('p',''))
-                fv = f"bestvideo[height<={h}]+bestaudio/bestvideo[width<={h}]+bestaudio/bestvideo+bestaudio/best"
+                fv = f"bestvideo[height<={h}]/bestvideo[width<={h}]/bestvideo/best"
             fa = "bestaudio"
             self._dbg("核心", f"画质={limit} v={fv} a={fa}")
 
@@ -379,6 +385,8 @@ class YtDlpPlugin(Star):
                     final_path, temp_files = out_path, [vp, ap]
             except Exception as e:
                 yield event.plain_result(f"❌ 下载错误: {e}")
+                fdbg = self._flush_debug(event)
+                if fdbg: yield fdbg
                 updated, _ = await self._try_update_ytdlp()
                 if updated: yield event.plain_result("✅ yt-dlp 已更新, 请重试")
                 return
@@ -430,6 +438,10 @@ class YtDlpPlugin(Star):
                     yield event.plain_result(f"🔗 {furl}{pwd_hint}")
             else:
                 yield event.chain_result([Video(file=furl, url=furl)])
+
+        # 汇总 debug
+        fdbg = self._flush_debug(event)
+        if fdbg: yield fdbg
 
         async def _clean():
             w = 120 if info.get('is_playlist') else self.delete_seconds + 30
