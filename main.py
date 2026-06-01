@@ -192,7 +192,7 @@ class YtDlpPlugin(Star):
         opts = self._inject({
             "quiet": True, "no_warnings": True, "nocheckcertificate": True,
             "extract_flat": "in_playlist",
-            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+            "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         })
         try:
             info = await asyncio.get_running_loop().run_in_executor(
@@ -318,7 +318,7 @@ class YtDlpPlugin(Star):
                 "outtmpl": f"{pf}/%(playlist_index)s_%(title)s.%(ext)s",
                 "format": "bestvideo[height<=1080]+bestaudio/bestvideo+bestaudio/best",
                 "quiet": True, "ignoreerrors": True, "noplaylist": False,
-                "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+                "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
             })
             try:
                 await asyncio.get_running_loop().run_in_executor(
@@ -472,7 +472,7 @@ class YtDlpPlugin(Star):
         opts = self._inject({
             "quiet": True, "no_warnings": True, "nocheckcertificate": True,
             "noplaylist": True, "skip_download": True,
-            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+            "extractor_args": {"youtube": {"player_client": ["web", "android"]}},
         })
         try:
             info = await asyncio.get_running_loop().run_in_executor(
