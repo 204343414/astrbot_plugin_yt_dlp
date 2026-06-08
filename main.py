@@ -44,7 +44,7 @@ class YtDlpPlugin(Star):
         # 审核配置
         mod_config = self.config.get("moderation", {})
         self.enable_moderation = mod_config.get("enabled", False)
-        self.moderation_llm_id = mod_config.get("llm_provider_id", 0)
+        self.moderation_provider_id = mod_config.get("provider_id", "")
         
         # 数据目录
         self.data_dir = os.path.join(self.plugin_dir, "data")
@@ -61,7 +61,7 @@ class YtDlpPlugin(Star):
         self._start_http_server()
         self.logger.info(f"文件服务器: http://{self.server_ip}:{self.server_port}")
         self.logger.info(f"画质设置: {self.max_quality} | H.264优先: {self.prefer_h264}")
-        self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商ID: {self.moderation_llm_id}")
+        self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商: {self.moderation_provider_id or '当前使用'}")
 
     def _resolve_ffmpeg_exe(self):
         ffmpeg_config = self.config.get("ffmpeg", {})
@@ -231,12 +231,14 @@ class YtDlpPlugin(Star):
 描述: {description}"""
         
         try:
-            provider_id = self.moderation_llm_id
-            if provider_id == 0:
-                provider_id = await self.context.get_current_chat_provider_id(umo=event.unified_msg_origin)
+            # 参考其他插件的写法：优先指定 provider_id，否则 fallback 到当前使用
+            provider = self.context.get_provider_by_id(self.moderation_provider_id) or self.context.get_using_provider(umo=event.unified_msg_origin)
+            if not provider:
+                self.logger.warning("未找到可用 LLM 提供商，跳过审核")
+                return False
             
             llm_resp = await self.context.llm_generate(
-                chat_provider_id=provider_id,
+                chat_provider_id=provider.meta().id if hasattr(provider, 'meta') else None,
                 prompt=prompt
             )
             response_text = llm_resp.completion_text.strip().lower()
@@ -264,7 +266,7 @@ class YtDlpPlugin(Star):
                     
                     try:
                         llm_resp_img = await self.context.llm_generate(
-                            chat_provider_id=provider_id,
+                            chat_provider_id=provider.meta().id if hasattr(provider, 'meta') else None,
                             prompt=image_prompt,
                             image_urls=[thumb_path]
                         )

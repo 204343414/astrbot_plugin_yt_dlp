@@ -82,11 +82,12 @@
         "default": false,
         "hint": "开启后，对国外视频 (非Bilibili) 使用LLM审核标题和封面，涉及敏感内容则阻止下载并记录黑名单"
       },
-      "llm_provider_id": {
-        "description": "审核LLM提供商ID",
-        "type": "int",
-        "default": 0,
-        "hint": "0表示使用当前聊天提供商，其他为指定提供商ID (在AstrBot WebUI中查看)"
+      "provider_id": {
+        "description": "审核LLM提供商",
+        "hint": "留空或者填写的提供商不存在时，则使用当前正在使用的LLM提供商",
+        "type": "string",
+        "default": "",
+        "_special": "select_provider"
       }
     }
   }
