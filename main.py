@@ -45,6 +45,7 @@ class YtDlpPlugin(Star):
         mod_config = self.config.get("moderation", {})
         self.enable_moderation = mod_config.get("enabled", False)
         self.moderation_provider_id = mod_config.get("provider_id", "")
+        self.admin_bypass_moderation = mod_config.get("admin_bypass", True)
         
         # 数据目录
         self.data_dir = os.path.join(self.plugin_dir, "data")
@@ -61,7 +62,7 @@ class YtDlpPlugin(Star):
         self._start_http_server()
         self.logger.info(f"文件服务器: http://{self.server_ip}:{self.server_port}")
         self.logger.info(f"画质设置: {self.max_quality} | H.264优先: {self.prefer_h264}")
-        self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商: {self.moderation_provider_id or '当前使用'}")
+        self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商: {self.moderation_provider_id or '当前使用'} | 管理员跳过审核: {self.admin_bypass_moderation}")
 
     def _resolve_ffmpeg_exe(self):
         ffmpeg_config = self.config.get("ffmpeg", {})
@@ -173,6 +174,16 @@ class YtDlpPlugin(Star):
         except:
             return str(event.session_id)
 
+    def _is_event_admin(self, event):
+        """判断当前事件是否由 AstrBot 管理员触发。"""
+        try:
+            if hasattr(event, 'is_admin') and callable(event.is_admin):
+                return bool(event.is_admin())
+            return getattr(event, 'role', None) == 'admin'
+        except Exception as e:
+            self.logger.warning(f"管理员身份判断失败: {e}")
+            return False
+
     def _ban_user(self, user_id, hours=24):
         ban_until = time.time() + hours * 3600
         self.banned_users[user_id] = ban_until
@@ -215,6 +226,9 @@ class YtDlpPlugin(Star):
 
     async def _audit_content(self, info, event):
         if not self.enable_moderation:
+            return False
+        if self.admin_bypass_moderation and self._is_event_admin(event):
+            self.logger.info("管理员触发下载，跳过内容审核")
             return False
         title = info.get('title', '')
         description = info.get('description', '') or ''
@@ -382,7 +396,7 @@ class YtDlpPlugin(Star):
             return
 
         # ==================== 内容审核检查 ====================
-        if self.enable_moderation:
+        if self.enable_moderation and not (self.admin_bypass_moderation and self._is_event_admin(event)):
             sender_id = self._get_sender_id(event)
             if self._is_user_banned(sender_id):
                 yield event.plain_result("网络不太好，过一会再来吧。")
