@@ -82,6 +82,12 @@
         "default": false,
         "hint": "开启后，对国外视频 (非Bilibili) 使用LLM审核标题和封面，涉及敏感内容则阻止下载并记录黑名单"
       },
+      "admin_bypass": {
+        "description": "AstrBot 管理员跳过审核",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，AstrBot 管理员使用下载命令时不会触发内容审核，也不会因审核黑名单被临时封禁；关闭后管理员与普通用户一样参与审核"
+      },
       "provider_id": {
         "description": "审核LLM提供商",
         "hint": "留空或者填写的提供商不存在时，则使用当前正在使用的LLM提供商",
