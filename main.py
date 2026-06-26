@@ -46,6 +46,7 @@ class YtDlpPlugin(Star):
         self.enable_moderation = mod_config.get("enabled", False)
         self.moderation_provider_id = mod_config.get("provider_id", "")
         self.admin_bypass_moderation = mod_config.get("admin_bypass", True)
+        self.moderation_group_whitelist = self._parse_group_whitelist(mod_config.get("group_whitelist", ""))
         
         # 数据目录
         self.data_dir = os.path.join(self.plugin_dir, "data")
@@ -62,7 +63,7 @@ class YtDlpPlugin(Star):
         self._start_http_server()
         self.logger.info(f"文件服务器: http://{self.server_ip}:{self.server_port}")
         self.logger.info(f"画质设置: {self.max_quality} | H.264优先: {self.prefer_h264}")
-        self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商: {self.moderation_provider_id or '当前使用'} | 管理员跳过审核: {self.admin_bypass_moderation}")
+        self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商: {self.moderation_provider_id or '当前使用'} | 管理员跳过审核: {self.admin_bypass_moderation} | 群白名单: {len(self.moderation_group_whitelist)}个")
 
     def _resolve_ffmpeg_exe(self):
         ffmpeg_config = self.config.get("ffmpeg", {})
@@ -174,6 +175,31 @@ class YtDlpPlugin(Star):
         except:
             return str(event.session_id)
 
+    def _parse_group_whitelist(self, value):
+        """解析配置中的 QQ 群白名单。支持逗号、空格、换行、分号分隔。"""
+        if not value:
+            return set()
+        if isinstance(value, (list, tuple, set)):
+            raw_items = value
+        else:
+            raw_items = re.split(r'[\s,，;；]+', str(value))
+        return {str(item).strip() for item in raw_items if str(item).strip()}
+
+    def _get_group_id(self, event):
+        """获取当前事件的群号；私聊或获取失败时返回空字符串。"""
+        try:
+            if hasattr(event, 'get_group_id') and callable(event.get_group_id):
+                group_id = event.get_group_id()
+                if group_id:
+                    return str(group_id)
+            if hasattr(event, 'message_obj'):
+                group_id = getattr(event.message_obj, 'group_id', None)
+                if group_id:
+                    return str(group_id)
+        except Exception as e:
+            self.logger.warning(f"群号获取失败: {e}")
+        return ""
+
     def _is_event_admin(self, event):
         """判断当前事件是否由 AstrBot 管理员触发。"""
         try:
@@ -183,6 +209,19 @@ class YtDlpPlugin(Star):
         except Exception as e:
             self.logger.warning(f"管理员身份判断失败: {e}")
             return False
+
+    def _should_bypass_moderation(self, event):
+        """判断本次事件是否应该跳过内容审核。"""
+        if self.admin_bypass_moderation and self._is_event_admin(event):
+            self.logger.info("管理员触发下载，跳过内容审核")
+            return True
+
+        group_id = self._get_group_id(event)
+        if group_id and group_id in self.moderation_group_whitelist:
+            self.logger.info(f"群 {group_id} 命中审核白名单，跳过内容审核")
+            return True
+
+        return False
 
     def _ban_user(self, user_id, hours=24):
         ban_until = time.time() + hours * 3600
@@ -227,8 +266,7 @@ class YtDlpPlugin(Star):
     async def _audit_content(self, info, event):
         if not self.enable_moderation:
             return False
-        if self.admin_bypass_moderation and self._is_event_admin(event):
-            self.logger.info("管理员触发下载，跳过内容审核")
+        if self._should_bypass_moderation(event):
             return False
         title = info.get('title', '')
         description = info.get('description', '') or ''
@@ -396,7 +434,7 @@ class YtDlpPlugin(Star):
             return
 
         # ==================== 内容审核检查 ====================
-        if self.enable_moderation and not (self.admin_bypass_moderation and self._is_event_admin(event)):
+        if self.enable_moderation and not self._should_bypass_moderation(event):
             sender_id = self._get_sender_id(event)
             if self._is_user_banned(sender_id):
                 yield event.plain_result("网络不太好，过一会再来吧。")
