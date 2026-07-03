@@ -48,6 +48,11 @@ class YtDlpPlugin(Star):
         self.admin_bypass_moderation = mod_config.get("admin_bypass", True)
         self.moderation_group_whitelist = self._parse_group_whitelist(mod_config.get("group_whitelist", ""))
         
+        # 访问控制
+        access_config = self.config.get("access_control", {})
+        self.enable_group_whitelist = access_config.get("enable_group_whitelist", False)
+        self.group_whitelist = self._parse_group_whitelist(access_config.get("group_whitelist", ""))
+        
         # 数据目录
         self.data_dir = os.path.join(self.plugin_dir, "data")
         if not os.path.exists(self.data_dir):
@@ -64,6 +69,7 @@ class YtDlpPlugin(Star):
         self.logger.info(f"文件服务器: http://{self.server_ip}:{self.server_port}")
         self.logger.info(f"画质设置: {self.max_quality} | H.264优先: {self.prefer_h264}")
         self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商: {self.moderation_provider_id or '当前使用'} | 管理员跳过审核: {self.admin_bypass_moderation} | 群白名单: {len(self.moderation_group_whitelist)}个")
+        self.logger.info(f"访问控制: {'开启' if self.enable_group_whitelist else '关闭'} | 允许群组: {len(self.group_whitelist)}个")
 
     def _resolve_ffmpeg_exe(self):
         ffmpeg_config = self.config.get("ffmpeg", {})
@@ -209,6 +215,17 @@ class YtDlpPlugin(Star):
         except Exception as e:
             self.logger.warning(f"管理员身份判断失败: {e}")
             return False
+
+    def _is_allowed(self, event):
+        """检查当前环境是否允许使用插件。"""
+        if not self.enable_group_whitelist:
+            return True
+        if self._is_event_admin(event):
+            return True
+        group_id = self._get_group_id(event)
+        if group_id and group_id in self.group_whitelist:
+            return True
+        return False
 
     def _should_bypass_moderation(self, event):
         """判断本次事件是否应该跳过内容审核。"""
@@ -656,6 +673,9 @@ class YtDlpPlugin(Star):
 
     @command("download")
     async def cmd_download_file(self, event: AstrMessageEvent, url: str = ""):
+        if not self._is_allowed(event):
+            yield event.plain_result("❌ 该群聊不在白名单中，无法使用下载功能。")
+            return
         raw = event.message_str
         # 兼容多种格式: /download, download, 或直接url
         full_url = url
@@ -671,6 +691,9 @@ class YtDlpPlugin(Star):
 
     @command("video")
     async def cmd_download_video(self, event: AstrMessageEvent, url: str = ""):
+        if not self._is_allowed(event):
+            yield event.plain_result("❌ 该群聊不在白名单中，无法使用下载功能。")
+            return
         raw = event.message_str
         full_url = url
         for prefix in ["/video ", "video "]:
@@ -684,6 +707,9 @@ class YtDlpPlugin(Star):
     @command("直链")
     async def cmd_get_direct_url(self, event: AstrMessageEvent, url: str = ""):
         """提取视频直链，不下载"""
+        if not self._is_allowed(event):
+            yield event.plain_result("❌ 该群聊不在白名单中，无法使用直链功能。")
+            return
         raw = event.message_str
         full_url = url
         for prefix in ["/直链 ", "直链 "]:

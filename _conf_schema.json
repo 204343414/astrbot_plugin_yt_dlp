@@ -102,5 +102,23 @@
         "_special": "select_provider"
       }
     }
+  },
+  "access_control": {
+    "description": "访问控制设置",
+    "type": "object",
+    "items": {
+      "enable_group_whitelist": {
+        "description": "启用群聊白名单",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，只有在下方白名单中的群聊可以使用本插件（管理员不受限）。"
+      },
+      "group_whitelist": {
+        "description": "允许使用的群聊白名单",
+        "type": "string",
+        "default": "",
+        "hint": "填写群号，多个用逗号、空格或换行分隔。"
+      }
+    }
   }
 }
