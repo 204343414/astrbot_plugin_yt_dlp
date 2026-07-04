@@ -62,22 +62,11 @@ class YtDlpPlugin(Star):
         self.banned_users_file = os.path.join(self.data_dir, "banned_users.json")
         self.blocked_videos = self._load_blocked_videos()
         self.banned_users = self._load_banned_users()
-
-        # 上传 / 直链配置
-        upload_cfg = self.config.get("upload", {})
-        self.upload_method = str(upload_cfg.get("method", "auto")).lower()
-        self.external_host = (upload_cfg.get("external_host", "") or "").strip()
-        try:
-            self.external_port = int(upload_cfg.get("external_port", 37777) or 37777)
-        except (TypeError, ValueError):
-            self.external_port = 37777
-
+        
         self.server_port = 0
-        # 直链对外地址：优先用用户配置的主机；Docker 内自动选“与 OneBot 同网”的容器 IP，
-        # 避免再用默认出口网卡 IP(容器内网地址，OneBot 跨网段够不到)。
-        self.server_ip = self._resolve_public_host()
-        self._start_http_server(self.external_port)
-        self.logger.info(f"文件服务器: http://{self.server_ip}:{self.server_port} (method={self.upload_method})")
+        self.server_ip = self._resolve_host()
+        self._start_http_server()
+        self.logger.info(f"文件服务器: http://{self.server_ip}:{self.server_port}")
         self.logger.info(f"画质设置: {self.max_quality} | H.264优先: {self.prefer_h264}")
         self.logger.info(f"内容审核: {self.enable_moderation} | LLM提供商: {self.moderation_provider_id or '当前使用'} | 管理员跳过审核: {self.admin_bypass_moderation} | 群白名单: {len(self.moderation_group_whitelist)}个")
         self.logger.info(f"访问控制: {'开启' if self.enable_group_whitelist else '关闭'} | 允许群组: {len(self.group_whitelist)}个")
@@ -114,67 +103,46 @@ class YtDlpPlugin(Star):
         except:
             return "127.0.0.1"
 
-    def _in_docker(self):
-        return os.path.exists("/.dockerenv")
-
-    def _resolve_public_host(self):
-        """返回 OneBot(NapCat) 能访问到的本机地址。"""
-        # 1) 用户显式配置优先(最可靠：可填 AstrBot 容器名如 astrbot，或宿主机可达 IP)
-        if self.external_host:
-            return self.external_host
-        # 2) Docker 内：自动选出“与 OneBot 同网”的容器 IP，而不是默认出口网卡 IP
-        if self._in_docker():
+    def _resolve_host(self):
+        """返回 OneBot(NapCat) 能访问到的本机地址。
+        Docker 内默认选“与 OneBot 同网”的容器 IP(排除默认出口网卡那个跨网段不可达的内网地址)；
+        裸机部署行为不变。可用 server.host 显式覆盖。"""
+        cfg = self.config.get("server", {})
+        host = (cfg.get("host", "") or "").strip()
+        if host:
+            return host
+        if os.path.exists("/.dockerenv"):
             try:
-                hn = socket.gethostname()
+                # 取与 OneBot 同网的容器 IP：排除默认出口网卡 IP
                 default_ip = self._get_local_ip()
-                infos = socket.getaddrinfo(hn, None, socket.AF_INET)
-                candidates = []
-                for info in infos:
+                hn = socket.gethostname()
+                for info in socket.getaddrinfo(hn, None, socket.AF_INET):
                     ip = info[4][0]
-                    if ip == "127.0.0.1":
-                        continue
-                    candidates.append(ip)
-                # 默认出口网卡 IP 通常是 NAT/外网桥(OneBot 不在其上)，优先返回其它网卡 IP
-                for ip in candidates:
-                    if ip != default_ip:
+                    if ip != "127.0.0.1" and ip != default_ip:
                         return ip
-                if candidates:
-                    return candidates[0]
-            except Exception as e:
-                self.logger.warning(f"解析容器地址失败，回退容器名: {e}")
-                try:
-                    return socket.gethostname()
-                except Exception:
-                    pass
-        # 3) 非 Docker：出口网卡 IP
+            except Exception:
+                pass
+            try:
+                return socket.gethostname()
+            except Exception:
+                pass
         return self._get_local_ip()
 
-    def _start_http_server(self, bind_port=37777):
+    def _start_http_server(self):
         class TempDirHandler(SimpleHTTPRequestHandler):
             def __init__(handler_self, *args, **kwargs):
                 super().__init__(*args, directory=self.temp_dir, **kwargs)
             def log_message(self, format, *args):
                 pass
 
-        # 先尝试固定端口；被占用则回退到随机端口，保证插件一定能启动
-        ports_to_try = [bind_port, 0] if bind_port else [0]
-        server = None
-        for p in ports_to_try:
-            try:
-                server = HTTPServer(('0.0.0.0', p), TempDirHandler)
-                self.server_port = server.server_port
-                break
-            except OSError as e:
-                self.logger.warning(f"文件服务器端口 {p} 被占用({e})，回退随机端口")
-        if server is None:
-            self.logger.error("文件服务器启动失败：无可用端口，直链/上传将不可用")
-            return
+        def run_server():
+            server = HTTPServer(('0.0.0.0', 0), TempDirHandler)
+            self.server_port = server.server_port
+            server.serve_forever()
 
-        def serve_forever(srv):
-            srv.serve_forever()
-
-        t = threading.Thread(target=serve_forever, args=(server,), daemon=True)
+        t = threading.Thread(target=run_server, daemon=True)
         t.start()
+        time.sleep(0.5)
 
     def _sanitize_filename(self, name: str) -> str:
         if not name:
@@ -708,30 +676,10 @@ class YtDlpPlugin(Star):
                 if tid:
                     act = "upload_group_file" if is_group else "upload_private_file"
                     key = "group_id" if is_group else "user_id"
-                    local_abs = os.path.abspath(final_path)
-                    upload_ok = False
-
-                    # auto / path：先尝试本地路径上传(同机 / 共享卷最稳，无需联网)
-                    if self.upload_method in ("auto", "path"):
-                        try:
-                            await event.bot.call_action(act, **{key: int(tid), "file": local_abs, "name": display_name})
-                            upload_ok = True
-                        except Exception as path_err:
-                            self.logger.warning(f"本地路径上传失败，回退直链URL: {path_err}")
-
-                    # url / auto 回退：用直链 URL 上传(NapCat 等同网组件可访问)
-                    if not upload_ok and self.upload_method in ("auto", "url"):
-                        try:
-                            await event.bot.call_action(act, **{key: int(tid), "file": furl, "name": display_name})
-                            upload_ok = True
-                        except Exception as upload_err:
-                            yield event.plain_result(
-                                f"❌ 上传超时或失败: {upload_err}\n"
-                                f"若提示 Connect Timeout，说明 OneBot 访问不到直链地址。\n"
-                                f"请在插件配置把 upload.external_host 设为 OneBot 可达的地址"
-                                f"(本机一般是 AStrBot 容器名，如 astrbot)，并保持 upload.method=auto。\n"
-                                f"🔗 直链: {furl}{pwd_hint}"
-                            )
+                    try:
+                        await event.bot.call_action(act, **{key: int(tid), "file": furl, "name": display_name})
+                    except Exception as upload_err:
+                        yield event.plain_result(f"❌ 上传超时或失败: {upload_err}\n🔗 请使用直链: {furl}{pwd_hint}")
                 else:
                     yield event.plain_result(f"🔗 直链: {furl}{pwd_hint}")
             else:
