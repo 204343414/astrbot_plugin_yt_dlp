@@ -121,28 +121,15 @@
       }
     }
   },
-  "upload": {
-    "description": "上传与直链设置（修复容器内网地址不可达 / OneBot 上传超时）",
+  "server": {
+    "description": "文件服务器（直链/上传）地址设置",
     "type": "object",
     "items": {
-      "method": {
-        "description": "文件上传方式",
-        "type": "string",
-        "default": "auto",
-        "options": ["auto", "path", "url"],
-        "hint": "auto=优先用本地路径上传(同机/共享卷最稳，无需联网)，失败再退回直链URL；path=始终本地路径；url=始终直链URL"
-      },
-      "external_host": {
-        "description": "直链/上传对外暴露的主机地址",
+      "host": {
+        "description": "对外暴露的主机地址",
         "type": "string",
         "default": "",
-        "hint": "留空=自动(Docker内选与OneBot同网的容器IP)。若自动仍超时，填 OneBot 能访问到的地址，通常是 AstrBot 容器名(如 astrbot)或宿主机可达IP"
-      },
-      "external_port": {
-        "description": "文件服务器端口",
-        "type": "int",
-        "default": 37777,
-        "hint": "固定端口；被占用会自动回退随机端口。容器间通信用内部端口即可，无需宿主机映射"
+        "hint": "留空=自动(Docker内选与OneBot同网的容器IP)。若自动仍超时，填 OneBot 能访问到的地址，如 AStrBot 容器名(astrbot)或宿主机可达IP"
       }
     }
   }
