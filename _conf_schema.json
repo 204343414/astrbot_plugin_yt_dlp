@@ -1,135 +1,93 @@
 {
   "proxy": {
-    "description": "HTTP 代理设置",
+    "description": "海外视频代理",
     "type": "object",
     "items": {
       "enabled": {
         "description": "启用代理",
         "type": "bool",
-        "default": false,
-        "hint": "如果需要下载 YouTube、Twitter 等海外视频，请开启并配置代理"
+        "default": false
       },
       "url": {
         "description": "代理地址",
         "type": "string",
-        "default": "http://127.0.0.1:7890",
-        "hint": "格式: http://IP:端口，常见端口有 7890 (Clash)、10809 (V2Ray)、1080 (Shadowsocks)"
+        "default": "http://127.0.0.1:7890"
       }
     }
   },
   "download": {
-    "description": "下载设置",
+    "description": "单视频下载与上传限制",
     "type": "object",
     "items": {
       "max_quality": {
         "description": "最高画质",
         "type": "string",
-        "default": "最高画质",
-        "options": ["最高画质", "480p", "720p", "1080p", "1440p", "2160p"],
-        "hint": "选择“最高画质”会优先下载可用的最佳视频流并与最佳音频流合并；如开启“优先 H.264 编码”，会优先选择兼容性更好的 H.264 流。画质越高文件越大，可能发送失败"
+        "default": "1080p",
+        "options": ["480p", "720p", "1080p", "1440p", "2160p", "最高画质"]
       },
       "max_size_mb": {
-        "description": "最大文件大小 (MB)",
+        "description": "下载完成后允许上传的最大文件大小MB；QQ实际限制以接口返回为准",
         "type": "int",
-        "default": 50,
-        "hint": "超过此大小的视频将不会下载，QQ 一般限制 100MB"
+        "default": 100
       },
       "auto_delete_seconds": {
-        "description": "临时文件清理时间 (秒)",
+        "description": "上传后临时文件保留秒数",
         "type": "int",
-        "default": 60,
-        "hint": "下载的视频文件多久后自动删除，设置太短可能导致发送失败"
+        "default": 300
       },
       "prefer_h264": {
-        "description": "优先 H.264 编码",
+        "description": "优先H.264，提高QQ客户端兼容性",
         "type": "bool",
-        "default": true,
-        "hint": "H.264 兼容性最好，关闭后可能下载 VP9/AV1 编码（部分设备无法播放）"
+        "default": true
+      },
+      "max_concurrent": {
+        "description": "同时下载任务数，建议公家Bot保持1",
+        "type": "int",
+        "default": 1
       }
     }
   },
   "ffmpeg": {
-    "description": "FFmpeg 设置",
+    "description": "FFmpeg设置",
     "type": "object",
     "items": {
-      "use_builtin": {
-        "description": "使用内置 FFmpeg",
+      "use_imageio": {
+        "description": "优先使用imageio-ffmpeg",
         "type": "bool",
-        "default": true,
-        "hint": "如果插件自带了 ffmpeg.exe，优先使用内置版本"
+        "default": true
       },
       "custom_path": {
-        "description": "自定义 FFmpeg 路径",
+        "description": "自定义FFmpeg路径，留空自动寻找",
         "type": "string",
-        "default": "",
-        "hint": "留空则自动寻找，填写示例: C:/ffmpeg/bin/ffmpeg.exe 或 /usr/bin/ffmpeg"
-      },
-      "use_system_path": {
-        "description": "搜索系统 PATH",
-        "type": "bool",
-        "default": true,
-        "hint": "当内置和自定义路径都找不到时，是否在系统 PATH 中搜索 ffmpeg"
-      }
-    }
-  },
-  "moderation": {
-    "description": "内容审核设置",
-    "type": "object",
-    "items": {
-      "enabled": {
-        "description": "启用视频内容审核",
-        "type": "bool",
-        "default": false,
-        "hint": "开启后，对国外视频 (非Bilibili) 使用LLM审核标题和封面，涉及敏感内容则阻止下载并记录黑名单"
-      },
-      "admin_bypass": {
-        "description": "AstrBot 管理员跳过审核",
-        "type": "bool",
-        "default": true,
-        "hint": "开启后，AstrBot 管理员使用下载命令时不会触发内容审核，也不会因审核黑名单被临时封禁；关闭后管理员与普通用户一样参与审核"
-      },
-      "group_whitelist": {
-        "description": "审核群白名单",
-        "type": "string",
-        "default": "",
-        "hint": "填写 QQ 群号后，该群内所有用户使用下载命令都不会触发内容审核。多个群号可用逗号、空格或换行分隔，例如：123456789,987654321"
-      },
-      "provider_id": {
-        "description": "审核LLM提供商",
-        "hint": "留空或者填写的提供商不存在时，则使用当前正在使用的LLM提供商",
-        "type": "string",
-        "default": "",
-        "_special": "select_provider"
+        "default": ""
       }
     }
   },
   "access_control": {
-    "description": "访问控制设置",
+    "description": "字幕组操作员",
     "type": "object",
     "items": {
-      "enable_group_whitelist": {
-        "description": "启用群聊白名单",
-        "type": "bool",
-        "default": false,
-        "hint": "开启后，只有在下方白名单中的群聊可以使用本插件（管理员不受限）。"
-      },
-      "group_whitelist": {
-        "description": "允许使用的群聊白名单",
-        "type": "string",
-        "default": "",
-        "hint": "填写群号，多个用逗号、空格或换行分隔。"
+      "operator_openids": {
+        "description": "允许下载的QQ官方用户OpenID，多个用逗号或换行分隔；AstrBot管理员自动允许",
+        "type": "text",
+        "default": ""
       }
     }
   },
-  "server": {
-    "description": "文件服务器（直链/上传）地址设置",
+  "moderation": {
+    "description": "国外视频标题、描述和封面强制审核；国内平台默认免审",
     "type": "object",
     "items": {
-      "host": {
-        "description": "对外暴露的主机地址",
+      "provider_id": {
+        "description": "多模态审核Provider；留空使用当前会话Provider，无可用Provider时拒绝",
         "type": "string",
         "default": "",
-        "hint": "留空=自动(Docker内选与OneBot同网的容器IP)。若自动仍超时，填 OneBot 能访问到的地址，如 AStrBot 容器名(astrbot)或宿主机可达IP"
+        "_special": "select_provider"
+      },
+      "group_openid_whitelist": {
+        "description": "审核白名单群的group_openid，多个用逗号或换行分隔；不是普通数字群号",
+        "type": "text",
+        "default": ""
       }
     }
   }
