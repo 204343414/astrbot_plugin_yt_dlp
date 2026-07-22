@@ -43,6 +43,11 @@ class YtDlpPlugin(Star):
         download = config.get("download", {}) or {}
         self.max_quality = str(download.get("max_quality", "1080p"))
         self.max_size_mb = max(int(download.get("max_size_mb", 100)), 1)
+        # QQ Official Adapter 会把本地文件 Base64 放进 JSON，体积约膨胀 4/3。
+        # 使用独立保守上限，避免大文件触发网关 413 后被底层连续重试。
+        self.qq_official_max_size_mb = min(
+            max(int(download.get("qq_official_max_size_mb", 70)), 1), 100
+        )
         self.auto_delete_seconds = max(int(download.get("auto_delete_seconds", 300)), 60)
         self.prefer_h264 = bool(download.get("prefer_h264", True))
         self.max_concurrent = max(int(download.get("max_concurrent", 1)), 1)
@@ -123,6 +128,13 @@ class YtDlpPlugin(Star):
 
     def _is_operator(self, event: AstrMessageEvent) -> bool:
         return bool(event.is_admin() or self._sender_id(event) in self.operator_ids)
+
+    @staticmethod
+    def _is_qq_official_event(event: AstrMessageEvent) -> bool:
+        try:
+            return event.get_platform_name() == "qq_official"
+        except Exception:
+            return False
 
     def _require_operator(self, event: AstrMessageEvent):
         if self._is_operator(event):
@@ -255,7 +267,7 @@ class YtDlpPlugin(Star):
             video = f"bestvideo{height_filter}"
         return f"({video})+bestaudio[ext=m4a]/best[ext=mp4]/best"
 
-    async def _download_video(self, url: str, task_id: str) -> tuple[Path, dict]:
+    async def _download_video(self, url: str, task_id: str, size_limit_mb: int) -> tuple[Path, dict]:
         output = self.temp_dir / f"{task_id}_%(id)s.%(ext)s"
         options = self._ydl_base_options()
         options.update({
@@ -281,8 +293,11 @@ class YtDlpPlugin(Star):
             raise RuntimeError("下载完成但找不到输出文件")
         final = files[0]
         size_mb = final.stat().st_size / 1024 / 1024
-        if size_mb > self.max_size_mb:
-            raise ValueError(f"文件 {size_mb:.1f}MB，超过配置上限 {self.max_size_mb}MB")
+        if size_mb > size_limit_mb:
+            raise ValueError(
+                f"文件 {size_mb:.1f}MB，超过当前发送模式的安全上限 {size_limit_mb}MB；"
+                "已在调用 QQ 上传接口前停止，避免 413 重试风暴"
+            )
         return final, info
 
     async def _cleanup_task(self, task_id: str, delay: int | None = None) -> None:
@@ -303,10 +318,6 @@ class YtDlpPlugin(Star):
                 continue
 
     async def _handle(self, event: AstrMessageEvent, url: str, as_file: bool):
-        permission = self._require_operator(event)
-        if permission:
-            yield permission
-            return
         url = str(url or "").strip()
         if not url.startswith(("http://", "https://")):
             yield event.plain_result("请提供 http/https 单视频链接。")
@@ -315,18 +326,35 @@ class YtDlpPlugin(Star):
         task_id = f"{int(time.time() * 1000)}_{hashlib_sha(url)}"
         async with self._download_semaphore:
             try:
-                yield event.plain_result("⏳ 正在解析并执行安全审核……")
                 info = await self._extract_info(url)
-                await self._moderate(info, event, task_id)
-                yield event.plain_result("⬇️ 审核通过，正在下载并合并音视频……")
-                final_path, downloaded_info = await self._download_video(url, task_id)
+                domestic = self._is_domestic_source(info)
+                if not domestic:
+                    permission = self._require_operator(event)
+                    if permission:
+                        yield permission
+                        return
+                    await self._moderate(info, event, task_id)
+                size_limit = min(
+                    self.max_size_mb,
+                    self.qq_official_max_size_mb
+                    if self._is_qq_official_event(event)
+                    else self.max_size_mb,
+                )
+                estimated = info.get("filesize") or info.get("filesize_approx")
+                if estimated and float(estimated) / 1024 / 1024 > size_limit:
+                    raise ValueError(
+                        f"预计文件 {float(estimated) / 1024 / 1024:.1f}MB，"
+                        f"超过当前发送上限 {size_limit}MB，未开始下载"
+                    )
+                final_path, downloaded_info = await self._download_video(
+                    url, task_id, size_limit_mb=size_limit
+                )
                 title = self._safe_filename(downloaded_info.get("title", "video"))
                 size_mb = final_path.stat().st_size / 1024 / 1024
                 if as_file:
                     component = File(name=f"{title}{final_path.suffix}", file=str(final_path))
                 else:
                     component = Video(file=str(final_path))
-                yield event.plain_result(f"⬆️ 正在通过 QQ 官方接口上传：{title}（{size_mb:.1f}MB）")
                 yield event.chain_result([component])
                 asyncio.create_task(self._cleanup_task(task_id))
             except Exception as exc:
