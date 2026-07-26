@@ -76,6 +76,11 @@
         "description": "允许下载的QQ官方用户OpenID，多个用逗号或换行分隔；AstrBot管理员自动允许",
         "type": "text",
         "default": ""
+      },
+      "allowed_qqofficial_instance_ids": {
+        "description": "允许下载的QQ官方平台实例ID，例如 default_102824564 或 102824564。注意：这是Bot实例/AppID范围，会放行该实例下所有群，不是群号。多个用逗号或换行分隔",
+        "type": "text",
+        "default": ""
       }
     }
   },
@@ -90,7 +95,7 @@
         "_special": "select_provider"
       },
       "group_openid_whitelist": {
-        "description": "审核白名单群的group_openid，多个用逗号或换行分隔；不是普通数字群号",
+        "description": "下载与审核白名单群的group_openid，多个用逗号或换行分隔；不是普通数字群号。拒绝提示会显示当前群的真实group_openid，复制填入即可",
         "type": "text",
         "default": ""
       }

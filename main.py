@@ -22,7 +22,7 @@ PLUGIN_NAME = "astrbot_plugin_yt_dlp"
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.0.0",
+    "4.1.0",
     "",
 )
 class YtDlpPlugin(Star):
@@ -55,6 +55,9 @@ class YtDlpPlugin(Star):
 
         access = config.get("access_control", {}) or {}
         self.operator_ids = self._parse_values(access.get("operator_openids", ""))
+        self.allowed_platform_instance_ids = self._parse_values(
+            access.get("allowed_qqofficial_instance_ids", "")
+        )
 
         moderation = config.get("moderation", {}) or {}
         self.moderation_provider_id = str(moderation.get("provider_id", "") or "")
@@ -130,18 +133,47 @@ class YtDlpPlugin(Star):
         return bool(event.is_admin() or self._sender_id(event) in self.operator_ids)
 
     @staticmethod
+    def _platform_instance_id(event: AstrMessageEvent) -> str:
+        try:
+            return str(event.get_platform_id() or "")
+        except Exception:
+            meta = getattr(event, "platform_meta", None)
+            return str(getattr(meta, "id", "") or "")
+
+    def _platform_instance_aliases(self, event: AstrMessageEvent) -> set[str]:
+        platform_id = self._platform_instance_id(event)
+        aliases = {platform_id} if platform_id else set()
+        # AstrBot often names QQ Official instances default_<appid>. Accepting
+        # the numeric suffix is convenient but remains an explicit instance
+        # whitelist, never a group identifier.
+        if platform_id.startswith("default_") and len(platform_id) > 8:
+            aliases.add(platform_id[8:])
+        return aliases
+
+    def _is_whitelisted_context(self, event: AstrMessageEvent) -> bool:
+        group_id = self._group_id(event)
+        if group_id and group_id in self.moderation_group_whitelist:
+            return True
+        return bool(
+            self._platform_instance_aliases(event)
+            & self.allowed_platform_instance_ids
+        )
+
+    @staticmethod
     def _is_qq_official_event(event: AstrMessageEvent) -> bool:
         try:
             return event.get_platform_name() == "qq_official"
         except Exception:
             return False
 
-    def _require_operator(self, event: AstrMessageEvent):
-        if self._is_operator(event):
+    def _require_download_access(self, event: AstrMessageEvent):
+        if self._is_operator(event) or self._is_whitelisted_context(event):
             return None
         return event.plain_result(
-            "该下载功能仅 AstrBot 管理员或字幕组操作员可用。\n"
-            f"当前 OpenID：{self._sender_id(event)}"
+            "该下载功能仅 AstrBot 管理员、字幕组操作员或白名单群可用。\n"
+            f"当前用户 OpenID：{self._sender_id(event)}\n"
+            f"当前群 group_openid：{self._group_id(event) or '非群聊'}\n"
+            f"当前平台实例：{self._platform_instance_id(event) or '未知'}"
         )
 
     def _ydl_base_options(self) -> dict:
@@ -210,8 +242,12 @@ class YtDlpPlugin(Star):
             logger.info("[yt-dlp] 国内平台免审: %s", info.get("extractor"))
             return
         group_id = self._group_id(event)
-        if group_id and group_id in self.moderation_group_whitelist:
-            logger.warning("[yt-dlp] 群命中审核白名单: %s", group_id)
+        if self._is_whitelisted_context(event):
+            logger.warning(
+                "[yt-dlp] 上下文命中下载/审核白名单: group=%s platform=%s",
+                group_id or "private",
+                self._platform_instance_id(event),
+            )
             return
 
         provider_id = await self._get_provider_id(event)
@@ -329,7 +365,7 @@ class YtDlpPlugin(Star):
                 info = await self._extract_info(url)
                 domestic = self._is_domestic_source(info)
                 if not domestic:
-                    permission = self._require_operator(event)
+                    permission = self._require_download_access(event)
                     if permission:
                         yield permission
                         return
