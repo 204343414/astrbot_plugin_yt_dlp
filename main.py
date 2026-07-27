@@ -26,7 +26,7 @@ if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.2.0",
+    "4.2.1",
     "",
 )
 class YtDlpPlugin(Star):
@@ -49,11 +49,11 @@ class YtDlpPlugin(Star):
         self.max_size_mb = max(int(download.get("max_size_mb", 100)), 1)
         # QQ Official Adapter 会把本地文件 Base64 放进 JSON，体积约膨胀 4/3。
         # 使用独立保守上限，避免大文件触发网关 413 后被底层连续重试。
-        # QQ Official embeds local media as Base64 in a JSON request. Real
-        # stgw tests still return 413 below the old 70MB raw-file limit, so use
-        # a process hard ceiling of 30MB until URL-fetch upload is available.
-        self.qq_official_max_size_mb = min(
-            max(int(download.get("qq_official_max_size_mb", 30)), 1), 30
+        # QQ Official embeds local media as Base64 in a JSON request. Keep the
+        # operational ceiling entirely configurable because different gateways
+        # may enforce different body limits; no hidden hard cap lives in code.
+        self.qq_official_max_size_mb = max(
+            int(download.get("qq_official_max_size_mb", 15)), 1
         )
         self.auto_delete_seconds = max(int(download.get("auto_delete_seconds", 300)), 60)
         self.prefer_h264 = bool(download.get("prefer_h264", True))
@@ -381,6 +381,7 @@ class YtDlpPlugin(Star):
             return
 
         task_id = f"{int(time.time() * 1000)}_{hashlib_sha(url)}"
+        size_mb = 0.0
         async with self._download_semaphore:
             try:
                 info = await self._extract_info(url)
@@ -419,7 +420,17 @@ class YtDlpPlugin(Star):
                 asyncio.create_task(self._cleanup_task(task_id))
             except Exception as exc:
                 logger.error("[yt-dlp] 任务失败: %s", exc)
-                yield event.plain_result(f"❌ 处理失败：{exc}")
+                error_text = str(exc) or type(exc).__name__
+                if (
+                    self._is_qq_official_event(event)
+                    and "无效 markdown content" in error_text
+                ):
+                    error_text = (
+                        f"QQ媒体上传失败（本地文件 {size_mb:.1f}MB，当前配置上限 "
+                        f"{self.qq_official_max_size_mb}MB）；适配器在413重试后返回"
+                        "“无效 markdown content”。请继续下调 qq_official_max_size_mb"
+                    )
+                yield event.plain_result(f"❌ 处理失败：{error_text}")
                 asyncio.create_task(self._cleanup_task(task_id, delay=1))
 
     @filter.command("video")
