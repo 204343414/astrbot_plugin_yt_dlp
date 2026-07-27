@@ -31,9 +31,10 @@
         "default": 100
       },
       "qq_official_max_size_mb": {
-        "description": "QQ官方本地Base64上传安全上限MB，默认70；最高允许配置100。超过时在上传前停止，避免413重试风暴",
+        "description": "QQ官方本地Base64上传安全上限MB，默认及硬上限30。实测旧70MB限制仍会触发stgw 413；超过时在上传前停止，避免5次重试风暴",
         "type": "int",
-        "default": 70
+        "default": 30,
+        "max": 30
       },
       "auto_delete_seconds": {
         "description": "上传后临时文件保留秒数",

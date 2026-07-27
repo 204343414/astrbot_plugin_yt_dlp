@@ -1,4 +1,5 @@
 import asyncio
+import builtins
 import json
 import os
 import re
@@ -17,12 +18,15 @@ from astrbot.api.star import Context, Star, register
 
 PLUGIN_NAME = "astrbot_plugin_yt_dlp"
 
+if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
+    builtins._ASTRBOT_YTDLP_RUNTIME = {"generation": 0, "instance": None}
+
 
 @register(
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.1.0",
+    "4.2.0",
     "",
 )
 class YtDlpPlugin(Star):
@@ -45,8 +49,11 @@ class YtDlpPlugin(Star):
         self.max_size_mb = max(int(download.get("max_size_mb", 100)), 1)
         # QQ Official Adapter 会把本地文件 Base64 放进 JSON，体积约膨胀 4/3。
         # 使用独立保守上限，避免大文件触发网关 413 后被底层连续重试。
+        # QQ Official embeds local media as Base64 in a JSON request. Real
+        # stgw tests still return 413 below the old 70MB raw-file limit, so use
+        # a process hard ceiling of 30MB until URL-fetch upload is available.
         self.qq_official_max_size_mb = min(
-            max(int(download.get("qq_official_max_size_mb", 70)), 1), 100
+            max(int(download.get("qq_official_max_size_mb", 30)), 1), 30
         )
         self.auto_delete_seconds = max(int(download.get("auto_delete_seconds", 300)), 60)
         self.prefer_h264 = bool(download.get("prefer_h264", True))
@@ -66,12 +73,23 @@ class YtDlpPlugin(Star):
         )
 
         self.ffmpeg_exe = self._resolve_ffmpeg_exe()
+        runtime = builtins._ASTRBOT_YTDLP_RUNTIME
+        runtime["generation"] = int(runtime.get("generation", 0)) + 1
+        self._runtime_generation = runtime["generation"]
+        runtime["instance"] = self
         logger.info(
             "[yt-dlp] QQ官方模式已加载：temp=%s quality=%s max=%dMB operators=%d",
             self.temp_dir,
             self.max_quality,
             self.max_size_mb,
             len(self.operator_ids),
+        )
+
+    def _is_current_runtime(self) -> bool:
+        runtime = builtins._ASTRBOT_YTDLP_RUNTIME
+        return (
+            runtime.get("instance") is self
+            and runtime.get("generation") == self._runtime_generation
         )
 
     def _resolve_data_dir(self) -> Path:
@@ -354,6 +372,9 @@ class YtDlpPlugin(Star):
                 continue
 
     async def _handle(self, event: AstrMessageEvent, url: str, as_file: bool):
+        if not self._is_current_runtime():
+            logger.warning("[yt-dlp] 忽略热重载残留插件实例: %s", id(self))
+            return
         url = str(url or "").strip()
         if not url.startswith(("http://", "https://")):
             yield event.plain_result("请提供 http/https 单视频链接。")
@@ -391,7 +412,10 @@ class YtDlpPlugin(Star):
                     component = File(name=f"{title}{final_path.suffix}", file=str(final_path))
                 else:
                     component = Video(file=str(final_path))
-                yield event.chain_result([component])
+                # Send inside the plugin so adapter/upload failures are caught
+                # here. Yielding a component defers the failure to RespondStage,
+                # where the plugin can no longer produce one final error.
+                await event.send(event.chain_result([component]))
                 asyncio.create_task(self._cleanup_task(task_id))
             except Exception as exc:
                 logger.error("[yt-dlp] 任务失败: %s", exc)
@@ -411,6 +435,9 @@ class YtDlpPlugin(Star):
             yield result
 
     async def terminate(self):
+        runtime = builtins._ASTRBOT_YTDLP_RUNTIME
+        if runtime.get("instance") is self:
+            runtime["instance"] = None
         logger.info("[yt-dlp] 插件已停止；临时文件由过期清理兜底")
 
 
