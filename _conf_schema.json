@@ -23,17 +23,24 @@
         "description": "最高画质",
         "type": "string",
         "default": "1080p",
-        "options": ["480p", "720p", "1080p", "1440p", "2160p", "最高画质"]
+        "options": [
+          "480p",
+          "720p",
+          "1080p",
+          "1440p",
+          "2160p",
+          "最高画质"
+        ]
       },
       "max_size_mb": {
-        "description": "通用下载文件大小上限MB",
+        "description": "非 QQ 官方平台的下载文件大小上限MB；QQ官方使用 qq_official_max_size_mb",
         "type": "int",
         "default": 100
       },
       "qq_official_max_size_mb": {
-        "description": "QQ官方本地Base64上传上限MB，完全以此配置为准，无代码硬上限。Base64约膨胀4/3；当前stgw实测30MB以内仍可能413，建议从15开始逐步测试",
+        "description": "QQ官方富媒体硬上限MB。插件在 QQ官方 下使用官方分片上传，最终仍只发送一条消息；官方硬限制200MB，默认200",
         "type": "int",
-        "default": 15,
+        "default": 200,
         "min": 1
       },
       "auto_delete_seconds": {
@@ -50,6 +57,12 @@
         "description": "同时下载任务数，建议公家Bot保持1",
         "type": "int",
         "default": 1
+      },
+      "qq_official_video_soft_limit_mb": {
+        "description": "QQ官方视频软限制MB。/video 下载结果不超过该值时按视频消息发送；超过该值且不超过硬上限时自动按文件卡片发送，避免额外失败重试。官方默认30MB",
+        "type": "int",
+        "default": 30,
+        "min": 1
       }
     }
   },
@@ -99,6 +112,37 @@
         "description": "下载与审核白名单群的group_openid，多个用逗号或换行分隔；不是普通数字群号。拒绝提示会显示当前群的真实group_openid，复制填入即可",
         "type": "text",
         "default": ""
+      }
+    }
+  },
+  "cookies": {
+    "description": "yt-dlp Cookies（可选）",
+    "type": "object",
+    "hint": "用于 B站/YouTube 等平台风控或登录态。可粘贴 Netscape cookies.txt 全文，也可粘贴浏览器 Cookie 请求头（a=b; c=d），也可填写服务器上的 cookies.txt 文件路径。插件不会把 cookie 内容写进日志。",
+    "items": {
+      "bilibili": {
+        "description": "Bilibili cookies.txt / Cookie 请求头 / 文件路径",
+        "type": "text",
+        "editor_mode": true,
+        "editor_language": "text",
+        "default": "",
+        "hint": "遇到 B站 412/登录限制时填写。推荐用浏览器导出 Netscape cookies.txt 后整段粘贴，或填写服务器本地路径。"
+      },
+      "youtube": {
+        "description": "YouTube cookies.txt / Cookie 请求头 / 文件路径",
+        "type": "text",
+        "editor_mode": true,
+        "editor_language": "text",
+        "default": "",
+        "hint": "YouTube 需要登录态、年龄验证或风控时填写。"
+      },
+      "generic": {
+        "description": "通用 cookies.txt / Cookie 请求头 / 文件路径",
+        "type": "text",
+        "editor_mode": true,
+        "editor_language": "text",
+        "default": "",
+        "hint": "当具体平台未配置 cookies 时使用。"
       }
     }
   }
