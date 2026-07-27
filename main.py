@@ -29,7 +29,7 @@ if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.3.0",
+    "4.3.1",
     "",
 )
 class YtDlpPlugin(Star):
@@ -621,8 +621,18 @@ class YtDlpPlugin(Star):
         timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_read=retry_timeout)
         async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
             with path.open("rb") as file_obj:
-                for part in sorted(parts, key=lambda item: int(item.get("index", 0))):
-                    index = int(part.get("index", 0))
+                uploaded_bytes = 0
+                # 官方文档写 UploadPart.index 从 0 开始，但线上返回可能与
+                # 文档不完全一致（例如从 1 开始）。读取本地文件时不要用
+                # index * block_size 反推偏移，而按 parts 顺序连续读取；
+                # part_index 仍按服务端返回值原样回传给 upload_part_finish。
+                for order, part in enumerate(
+                    sorted(parts, key=lambda item: int(item.get("index", 0)))
+                ):
+                    try:
+                        index = int(part.get("index", order))
+                    except (TypeError, ValueError):
+                        index = order
                     presigned_url = str(part.get("presigned_url") or "")
                     if not presigned_url:
                         raise RuntimeError(f"分片 {index} 缺少 presigned_url")
@@ -630,14 +640,24 @@ class YtDlpPlugin(Star):
                         part_size = int(part.get("block_size") or block_size)
                     except (TypeError, ValueError):
                         part_size = block_size
-                    offset = index * block_size
-                    if offset >= file_size:
-                        data = b""
-                    else:
-                        file_obj.seek(offset)
-                        data = file_obj.read(min(part_size, file_size - offset))
+                    remaining = file_size - uploaded_bytes
+                    if remaining <= 0:
+                        logger.warning(
+                            "[yt-dlp] QQ预上传返回多余分片: index=%s uploaded=%d size=%d",
+                            index,
+                            uploaded_bytes,
+                            file_size,
+                        )
+                        break
+                    offset = uploaded_bytes
+                    file_obj.seek(offset)
+                    data = file_obj.read(min(part_size, remaining))
                     if not data:
-                        raise RuntimeError(f"分片 {index} 读取为空，offset={offset}, part_size={part_size}")
+                        raise RuntimeError(
+                            f"分片 {index} 读取为空，offset={offset}, "
+                            f"part_size={part_size}, uploaded={uploaded_bytes}, "
+                            f"file_size={file_size}"
+                        )
                     await self._qq_put_upload_part(
                         session,
                         presigned_url,
@@ -658,6 +678,11 @@ class YtDlpPlugin(Star):
                             "md5": part_md5,
                         },
                         allow_none=True,
+                    )
+                    uploaded_bytes += len(data)
+                if uploaded_bytes != file_size:
+                    raise RuntimeError(
+                        f"分片上传本地读取字节数不一致：uploaded={uploaded_bytes}, file_size={file_size}"
                     )
 
         complete_payload = {

@@ -70,6 +70,30 @@ def load_plugin_module():
     imageio_ffmpeg.get_ffmpeg_exe = lambda: "ffmpeg"
     sys.modules["imageio_ffmpeg"] = imageio_ffmpeg
 
+    botpy = types.ModuleType("botpy")
+    botpy_http = types.ModuleType("botpy.http")
+    class Route:
+        def __init__(self, method, path, **kwargs):
+            self.method = method
+            self.path = path
+            self.kwargs = kwargs
+    botpy_http.Route = Route
+    botpy_types = types.ModuleType("botpy.types")
+    botpy_types_message = types.ModuleType("botpy.types.message")
+    class Media(dict):
+        def __init__(self, file_uuid="", file_info="", ttl=0):
+            super().__init__(file_uuid=file_uuid, file_info=file_info, ttl=ttl)
+            self.file_uuid = file_uuid
+            self.file_info = file_info
+            self.ttl = ttl
+    botpy_types_message.Media = Media
+    botpy_types.message = botpy_types_message
+    botpy.types = botpy_types
+    sys.modules["botpy"] = botpy
+    sys.modules["botpy.http"] = botpy_http
+    sys.modules["botpy.types"] = botpy_types
+    sys.modules["botpy.types.message"] = botpy_types_message
+
     spec = importlib.util.spec_from_file_location("yt_plugin_under_test", Path(__file__).resolve().parents[1] / "main.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
@@ -155,6 +179,52 @@ class CoreBehaviorTests(unittest.TestCase):
         self.assertEqual(sent_as, "file")
         self.assertEqual(calls["file_type"], 4)
         self.assertEqual(calls["payload"]["msg_type"], 7)
+
+
+    def test_chunk_upload_reads_local_file_sequentially_when_api_index_is_one_based(self):
+        plugin = self.make_plugin_shell()
+        block = 10 * 1024 * 1024
+        tail = 6_938_291
+        path = plugin.data_dir / "one_based_parts.mp4"
+        path.write_bytes(b"a" * block + b"b" * block + b"c" * tail)
+        uploaded_sizes = []
+        finish_payloads = []
+
+        plugin._qq_official_target = lambda event: ("group", "group_openid")
+
+        async def fake_put(session, url, data, *, retry_timeout, retry_delay):
+            uploaded_sizes.append(len(data))
+
+        async def fake_api(event, method, route_path, route_kwargs, payload, **kwargs):
+            if route_path.endswith("/upload_prepare"):
+                return {
+                    "upload_id": "upload_1",
+                    "block_size": str(block),
+                    # 线上 QQ 可能返回 1-based index；本地读取不能用 index*block_size。
+                    "parts": [
+                        {"index": 1, "presigned_url": "https://cos/1", "block_size": str(block)},
+                        {"index": 2, "presigned_url": "https://cos/2", "block_size": str(block)},
+                        {"index": 3, "presigned_url": "https://cos/3", "block_size": str(tail)},
+                    ],
+                    "upload_config": {"retry_timeout": 1, "retry_delay": 1},
+                }
+            if route_path.endswith("/upload_part_finish"):
+                finish_payloads.append(payload)
+                return {}
+            if route_path.endswith("/files"):
+                return {"file_uuid": "uuid", "file_info": "info", "ttl": 300}
+            raise AssertionError(route_path)
+
+        plugin._qq_put_upload_part = fake_put
+        plugin._qq_api_request = fake_api
+        media = asyncio.run(
+            plugin._upload_qq_official_by_chunks(
+                types.SimpleNamespace(), path, file_type=4, file_name="video.mp4"
+            )
+        )
+        self.assertEqual(uploaded_sizes, [block, block, tail])
+        self.assertEqual([item["part_index"] for item in finish_payloads], [1, 2, 3])
+        self.assertEqual(media.file_info, "info")
 
 
 if __name__ == "__main__":
