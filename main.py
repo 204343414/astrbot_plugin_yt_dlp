@@ -29,7 +29,7 @@ if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.3.1",
+    "4.3.2",
     "",
 )
 class YtDlpPlugin(Star):
@@ -81,9 +81,21 @@ class YtDlpPlugin(Star):
 
         moderation = config.get("moderation", {}) or {}
         self.moderation_provider_id = str(moderation.get("provider_id", "") or "")
-        self.moderation_group_whitelist = self._parse_values(
-            moderation.get("group_openid_whitelist", "")
-        )
+        # Backward compatible group allowlist parsing.  Older versions exposed
+        # the QQ Official group_openid allowlist under ``moderation`` because it
+        # also skipped foreign-video moderation.  Keep honoring that key, but
+        # the canonical home is now access_control.allowed_group_openids so the
+        # permission surface is not hidden inside the moderation section.
+        self.allowed_group_openids = set()
+        for value in (
+            access.get("allowed_group_openids", ""),
+            access.get("allowed_qqofficial_group_openids", ""),
+            moderation.get("group_openid_whitelist", ""),
+            config.get("group_openid_whitelist", ""),
+            config.get("group_whitelist", ""),
+        ):
+            self.allowed_group_openids |= self._parse_values(value)
+        self.moderation_group_whitelist = self.allowed_group_openids
 
         self.ffmpeg_exe = self._resolve_ffmpeg_exe()
         runtime = builtins._ASTRBOT_YTDLP_RUNTIME
@@ -91,13 +103,15 @@ class YtDlpPlugin(Star):
         self._runtime_generation = runtime["generation"]
         runtime["instance"] = self
         logger.info(
-            "[yt-dlp] 已加载：temp=%s quality=%s generic_max=%dMB qq_max=%dMB qq_video_soft=%dMB operators=%d",
+            "[yt-dlp] 已加载：temp=%s quality=%s generic_max=%dMB qq_max=%dMB qq_video_soft=%dMB operators=%d allowed_groups=%d allowed_instances=%d",
             self.temp_dir,
             self.max_quality,
             self.max_size_mb,
             self.qq_official_max_size_mb,
             self.qq_official_video_soft_limit_mb,
             len(self.operator_ids),
+            len(self.allowed_group_openids),
+            len(self.allowed_platform_instance_ids),
         )
 
     def _is_current_runtime(self) -> bool:
@@ -185,7 +199,7 @@ class YtDlpPlugin(Star):
 
     def _is_whitelisted_context(self, event: AstrMessageEvent) -> bool:
         group_id = self._group_id(event)
-        if group_id and group_id in self.moderation_group_whitelist:
+        if group_id and group_id in self.allowed_group_openids:
             return True
         return bool(
             self._platform_instance_aliases(event)
@@ -206,7 +220,8 @@ class YtDlpPlugin(Star):
             "该下载功能仅 AstrBot 管理员、字幕组操作员或白名单群可用。\n"
             f"当前用户 OpenID：{self._sender_id(event)}\n"
             f"当前群 group_openid：{self._group_id(event) or '非群聊'}\n"
-            f"当前平台实例：{self._platform_instance_id(event) or '未知'}"
+            f"当前平台实例：{self._platform_instance_id(event) or '未知'}\n"
+            "如需放行本群，请把当前 group_openid 填入 access_control.allowed_group_openids。"
         )
 
     @staticmethod

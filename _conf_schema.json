@@ -91,6 +91,12 @@
         "type": "text",
         "default": ""
       },
+      "allowed_group_openids": {
+        "description": "允许下载的 QQ 官方群 group_openid，多个用逗号或换行分隔。填拒绝提示里的“当前群 group_openid”即可。兼容旧配置 moderation.group_openid_whitelist。",
+        "type": "text",
+        "default": "",
+        "hint": "这是群白名单，不是普通数字群号。示例：DCE81C5405474F2682BDB0B112C33A3C。命中后可下载并跳过国外视频审核。"
+      },
       "allowed_qqofficial_instance_ids": {
         "description": "允许下载的QQ官方平台实例ID，例如 default_102824564 或 102824564。注意：这是Bot实例/AppID范围，会放行该实例下所有群，不是群号。多个用逗号或换行分隔",
         "type": "text",
@@ -109,7 +115,7 @@
         "_special": "select_provider"
       },
       "group_openid_whitelist": {
-        "description": "下载与审核白名单群的group_openid，多个用逗号或换行分隔；不是普通数字群号。拒绝提示会显示当前群的真实group_openid，复制填入即可",
+        "description": "兼容旧版的下载与审核白名单群 group_openid；建议改填 access_control.allowed_group_openids。多个用逗号或换行分隔。",
         "type": "text",
         "default": ""
       }
