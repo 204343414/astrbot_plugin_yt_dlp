@@ -34,7 +34,7 @@ if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.4.2",
+    "4.4.3",
     "",
 )
 class YtDlpPlugin(Star):
@@ -319,9 +319,11 @@ class YtDlpPlugin(Star):
         if not value:
             return None, None
 
-        expanded = Path(os.path.expanduser(value))
-        if expanded.exists():
-            return str(expanded), None
+        # WebUI/JSON 里可能保存为字面量 \n / \t，而不是实际换行/制表符。
+        # 先还原再判断 cookies.txt，避免把整段 cookies 当作超长文件名去
+        # Path.exists()，从而触发 [Errno 36] File name too long。
+        if ("\\n" in value or "\\t" in value) and "\n" not in value:
+            value = value.replace("\\n", "\n").replace("\\t", "\t")
 
         lowered = value.lower().lstrip()
         key = self._cookie_key_for_url(url)
@@ -334,6 +336,15 @@ class YtDlpPlugin(Star):
             except OSError:
                 pass
             return str(cookie_path), None
+
+        # 先判断是不是已有文件路径。必须捕获 OSError：如果用户粘贴了
+        # 一长串 Cookie header / 其它文本，Path.exists() 可能因文件名过长失败。
+        try:
+            expanded = Path(os.path.expanduser(value))
+            if expanded.exists():
+                return str(expanded), None
+        except OSError:
+            pass
 
         # 也兼容直接粘贴浏览器 Request Header 里的 Cookie: a=b; c=d。
         if lowered.startswith("cookie:"):

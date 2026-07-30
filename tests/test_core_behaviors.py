@@ -152,6 +152,22 @@ class CoreBehaviorTests(unittest.TestCase):
             "https://www.bilibili.com/video/BV1Cr34zbELk/",
         )
 
+
+    def test_escaped_netscape_cookie_text_is_written_before_path_probe(self):
+        plugin = self.make_plugin_shell()
+        plugin.generic_cookies = "# Netscape HTTP Cookie File\n.douyin.com\tTRUE\t/\tFALSE\t0\tttwid\tabc"
+        cookiefile, header = plugin._resolve_cookie_for_ytdlp("https://v.douyin.com/abc/")
+        self.assertIsNone(header)
+        text = Path(cookiefile).read_text()
+        self.assertIn(".douyin.com	TRUE", text)
+
+    def test_long_cookie_header_does_not_raise_file_name_too_long(self):
+        plugin = self.make_plugin_shell()
+        plugin.generic_cookies = "; ".join(f"k{i}=v{i}" for i in range(1200))
+        cookiefile, header = plugin._resolve_cookie_for_ytdlp("https://v.douyin.com/abc/")
+        self.assertIsNone(cookiefile)
+        self.assertIn("k1199=v1199", header)
+
     def test_cookie_header_config(self):
         plugin = self.make_plugin_shell()
         plugin.bilibili_cookies = "SESSDATA=abc; bili_jct=def"
