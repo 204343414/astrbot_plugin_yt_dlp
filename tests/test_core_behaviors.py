@@ -122,6 +122,21 @@ class CoreBehaviorTests(unittest.TestCase):
         plugin.public_domestic_only = True
         return plugin
 
+
+    def test_extract_first_url_from_share_text(self):
+        text = "这个视频真不错 标题若干 https://www.youtube.com/watch?v=abc123 复制链接"
+        self.assertEqual(
+            self.mod.YtDlpPlugin._extract_first_url(text),
+            "https://www.youtube.com/watch?v=abc123",
+        )
+
+    def test_extract_first_url_from_markdown_and_unescape(self):
+        text = "[标题](https://www.bilibili.com/video/BV1xx/?a=1&amp;b=2)。"
+        self.assertEqual(
+            self.mod.YtDlpPlugin._extract_first_url(text),
+            "https://www.bilibili.com/video/BV1xx/?a=1&b=2",
+        )
+
     def test_normalize_bilibili_url_strips_tracking_query(self):
         raw = "https://www.bilibili.com/video/BV1Cr34zbELk?spm_id_from=333&vd_source=secret"
         self.assertEqual(

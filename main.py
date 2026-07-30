@@ -19,6 +19,11 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.message_components import File, Video
 from astrbot.api.star import Context, Star, register
 
+try:
+    from astrbot.core.star.filter.command import GreedyStr
+except Exception:  # pragma: no cover - test/lightweight environments
+    GreedyStr = str
+
 PLUGIN_NAME = "astrbot_plugin_yt_dlp"
 
 if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
@@ -29,7 +34,7 @@ if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.4.0",
+    "4.4.1",
     "",
 )
 class YtDlpPlugin(Star):
@@ -238,6 +243,29 @@ class YtDlpPlugin(Star):
         if self._has_privileged_download_access(event):
             return None
         return self._deny_download_access(event)
+
+    @staticmethod
+    def _extract_first_url(text: str) -> str:
+        """Extract the first http(s) URL from messy share text.
+
+        Many mobile apps copy text like "标题 ... https://example/... 复制此链接" or
+        Markdown fragments like [title](https://...).  Commands use GreedyStr so
+        the whole tail reaches this function; only the first actual URL is sent
+        to yt-dlp.
+        """
+        text = html.unescape(str(text or "").strip())
+        if not text:
+            return ""
+        match = re.search(r'https?://[^\s<>\'"`]+', text, flags=re.I)
+        if not match:
+            return ""
+        url = match.group(0).strip()
+        # Strip common wrappers/trailing punctuation from Markdown, IM quote
+        # markers and Chinese share text. Keep query delimiters inside the URL.
+        trailing = "\r\n\t .,，。!！?？;；]})）】》>。"
+        while url and url[-1] in trailing:
+            url = url[:-1]
+        return url
 
     @staticmethod
     def _normalize_url(url: str) -> str:
@@ -792,9 +820,9 @@ class YtDlpPlugin(Star):
         if not self._is_current_runtime():
             logger.warning("[yt-dlp] 忽略热重载残留插件实例: %s", id(self))
             return
-        url = self._normalize_url(url)
+        url = self._normalize_url(self._extract_first_url(url) or url)
         if not url.startswith(("http://", "https://")):
-            yield event.plain_result("请提供 http/https 单视频链接。")
+            yield event.plain_result("请提供包含 http/https 的单视频链接。")
             return
 
         task_id = f"{int(time.time() * 1000)}_{hashlib_sha(url)}"
@@ -902,14 +930,14 @@ class YtDlpPlugin(Star):
                 asyncio.create_task(self._cleanup_task(task_id, delay=1))
 
     @filter.command("video")
-    async def video(self, event: AstrMessageEvent, url: str = ""):
-        """下载单视频并作为 QQ 视频消息发送。"""
+    async def video(self, event: AstrMessageEvent, url: GreedyStr = ""):
+        """下载单视频并作为 QQ 视频消息发送；可从分享文案中自动提取链接。"""
         async for result in self._handle(event, url, as_file=False):
             yield result
 
     @filter.command("download")
-    async def download(self, event: AstrMessageEvent, url: str = ""):
-        """下载单视频并作为 QQ 文件消息发送。"""
+    async def download(self, event: AstrMessageEvent, url: GreedyStr = ""):
+        """下载单视频并作为 QQ 文件消息发送；可从分享文案中自动提取链接。"""
         async for result in self._handle(event, url, as_file=True):
             yield result
 

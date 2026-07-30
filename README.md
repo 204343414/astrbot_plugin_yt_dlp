@@ -115,3 +115,14 @@ HTTP Error 412: Precondition Failed
 4. 视频来源不是国内平台
 
 `provider_id` 留空会被视为未开启审核，不会默认拒绝下载。
+
+## 分享文案自动提取 URL
+
+`/video` 和 `/download` 使用贪婪参数读取整段分享文案，会自动提取第一条 `http://` 或 `https://` 链接。例如下面这些都可以：
+
+```text
+/download 这个视频标题 https://www.youtube.com/watch?v=xxxx 复制链接
+/video [标题](https://www.bilibili.com/video/BVxxxx/?spm_id_from=...)
+```
+
+插件只把提取到的第一个 URL 交给 yt-dlp；Bilibili URL 仍会继续自动清洗跟踪参数。
