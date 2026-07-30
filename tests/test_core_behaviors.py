@@ -116,6 +116,10 @@ class CoreBehaviorTests(unittest.TestCase):
         plugin.generic_cookies = ""
         plugin.qq_official_max_size_mb = 200
         plugin.qq_official_video_soft_limit_mb = 30
+        plugin.operator_ids = set()
+        plugin.allowed_group_openids = set()
+        plugin.allowed_platform_instance_ids = set()
+        plugin.public_domestic_only = True
         return plugin
 
     def test_normalize_bilibili_url_strips_tracking_query(self):
@@ -226,6 +230,37 @@ class CoreBehaviorTests(unittest.TestCase):
         self.assertEqual([item["part_index"] for item in finish_payloads], [1, 2, 3])
         self.assertEqual(media.file_info, "info")
 
+
+    def make_event_shell(self, *, sender="user", group="group", platform="default_1", admin=False):
+        class Event:
+            def get_sender_id(self): return sender
+            def get_group_id(self): return group
+            def get_platform_id(self): return platform
+            def is_admin(self): return admin
+            def plain_result(self, text): return text
+        return Event()
+
+    def test_public_domestic_mode_blocks_foreign_for_unprivileged_user(self):
+        plugin = self.make_plugin_shell()
+        event = self.make_event_shell()
+        denial = plugin._deny_download_access(
+            event,
+            "公开下载模式仅支持 B站/抖音/微博等国内平台；YouTube、X/Twitter、Pornhub 等国外或高风险站点仅限管理员、字幕组操作员或白名单群使用。",
+        )
+        self.assertIn("公开下载模式仅支持", denial)
+        self.assertIn("当前群 group_openid：group", denial)
+
+    def test_operator_bypasses_public_domestic_mode(self):
+        plugin = self.make_plugin_shell()
+        plugin.operator_ids = {"op"}
+        event = self.make_event_shell(sender="op")
+        self.assertTrue(plugin._has_privileged_download_access(event))
+
+    def test_group_allowlist_bypasses_public_domestic_mode(self):
+        plugin = self.make_plugin_shell()
+        plugin.allowed_group_openids = {"group"}
+        event = self.make_event_shell(group="group")
+        self.assertTrue(plugin._has_privileged_download_access(event))
 
 if __name__ == "__main__":
     unittest.main()

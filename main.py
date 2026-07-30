@@ -29,7 +29,7 @@ if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.3.2",
+    "4.4.0",
     "",
 )
 class YtDlpPlugin(Star):
@@ -78,9 +78,15 @@ class YtDlpPlugin(Star):
         self.allowed_platform_instance_ids = self._parse_values(
             access.get("allowed_qqofficial_instance_ids", "")
         )
+        # Public domestic-only mode: ordinary users may use domestic sources,
+        # while foreign/high-risk sites (YouTube, X/Twitter, Pornhub, etc. and
+        # any non-domestic extractor) remain limited to AstrBot admins,
+        # operators, allowed groups, or allowed bot instances.
+        self.public_domestic_only = bool(access.get("public_domestic_only", True))
 
         moderation = config.get("moderation", {}) or {}
         self.moderation_provider_id = str(moderation.get("provider_id", "") or "")
+        self.enable_content_review = bool(moderation.get("enable_content_review", False))
         # Backward compatible group allowlist parsing.  Older versions exposed
         # the QQ Official group_openid allowlist under ``moderation`` because it
         # also skipped foreign-video moderation.  Keep honoring that key, but
@@ -103,7 +109,7 @@ class YtDlpPlugin(Star):
         self._runtime_generation = runtime["generation"]
         runtime["instance"] = self
         logger.info(
-            "[yt-dlp] 已加载：temp=%s quality=%s generic_max=%dMB qq_max=%dMB qq_video_soft=%dMB operators=%d allowed_groups=%d allowed_instances=%d",
+            "[yt-dlp] 已加载：temp=%s quality=%s generic_max=%dMB qq_max=%dMB qq_video_soft=%dMB operators=%d allowed_groups=%d allowed_instances=%d public_domestic_only=%s review=%s",
             self.temp_dir,
             self.max_quality,
             self.max_size_mb,
@@ -112,6 +118,8 @@ class YtDlpPlugin(Star):
             len(self.operator_ids),
             len(self.allowed_group_openids),
             len(self.allowed_platform_instance_ids),
+            self.public_domestic_only,
+            self.enable_content_review and bool(self.moderation_provider_id),
         )
 
     def _is_current_runtime(self) -> bool:
@@ -213,16 +221,23 @@ class YtDlpPlugin(Star):
         except Exception:
             return False
 
-    def _require_download_access(self, event: AstrMessageEvent):
-        if self._is_operator(event) or self._is_whitelisted_context(event):
-            return None
+    def _has_privileged_download_access(self, event: AstrMessageEvent) -> bool:
+        return self._is_operator(event) or self._is_whitelisted_context(event)
+
+    def _deny_download_access(self, event: AstrMessageEvent, reason: str | None = None):
+        headline = reason or "该下载功能仅 AstrBot 管理员、字幕组操作员或白名单群可用。"
         return event.plain_result(
-            "该下载功能仅 AstrBot 管理员、字幕组操作员或白名单群可用。\n"
+            f"{headline}\n"
             f"当前用户 OpenID：{self._sender_id(event)}\n"
             f"当前群 group_openid：{self._group_id(event) or '非群聊'}\n"
             f"当前平台实例：{self._platform_instance_id(event) or '未知'}\n"
             "如需放行本群，请把当前 group_openid 填入 access_control.allowed_group_openids。"
         )
+
+    def _require_download_access(self, event: AstrMessageEvent):
+        if self._has_privileged_download_access(event):
+            return None
+        return self._deny_download_access(event)
 
     @staticmethod
     def _normalize_url(url: str) -> str:
@@ -792,11 +807,30 @@ class YtDlpPlugin(Star):
 
                 stage = "权限与内容审核"
                 domestic = self._is_domestic_source(info)
-                if not domestic:
-                    permission = self._require_download_access(event)
-                    if permission:
-                        yield permission
-                        return
+                privileged = self._has_privileged_download_access(event)
+
+                if not privileged:
+                    if self.public_domestic_only:
+                        if not domestic:
+                            yield self._deny_download_access(
+                                event,
+                                "公开下载模式仅支持 B站/抖音/微博等国内平台；YouTube、X/Twitter、Pornhub 等国外或高风险站点仅限管理员、字幕组操作员或白名单群使用。",
+                            )
+                            return
+                    else:
+                        permission = self._require_download_access(event)
+                        if permission:
+                            yield permission
+                            return
+
+                # Content review is opt-in.  Leaving provider_id empty is treated
+                # as review disabled, not as fail-closed rejection.
+                if (
+                    privileged
+                    and not domestic
+                    and self.enable_content_review
+                    and self.moderation_provider_id
+                ):
                     await self._moderate(info, event, task_id)
 
                 qq_official = self._is_qq_official_event(event)

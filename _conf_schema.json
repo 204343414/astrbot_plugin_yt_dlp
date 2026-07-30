@@ -97,6 +97,12 @@
         "default": "",
         "hint": "这是群白名单，不是普通数字群号。示例：DCE81C5405474F2682BDB0B112C33A3C。命中后可下载并跳过国外视频审核。"
       },
+      "public_domestic_only": {
+        "description": "公开国内平台模式",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，普通用户可下载 B站/抖音/微博等国内平台；YouTube、X/Twitter、Pornhub 等国外或高风险站点仍只允许 AstrBot 管理员、字幕组操作员、白名单群或白名单 Bot 实例使用。关闭后，所有下载都要求管理员/操作员/白名单。"
+      },
       "allowed_qqofficial_instance_ids": {
         "description": "允许下载的QQ官方平台实例ID，例如 default_102824564 或 102824564。注意：这是Bot实例/AppID范围，会放行该实例下所有群，不是群号。多个用逗号或换行分隔",
         "type": "text",
@@ -105,11 +111,17 @@
     }
   },
   "moderation": {
-    "description": "国外视频标题、描述和封面强制审核；国内平台默认免审",
+    "description": "国外视频标题、描述和封面审核（可选）；国内平台默认免审",
     "type": "object",
     "items": {
+      "enable_content_review": {
+        "description": "启用国外视频内容审核",
+        "type": "bool",
+        "default": false,
+        "hint": "关闭时不调用审核模型。开启且选择 provider_id 后，管理员/操作员/白名单群下载国外视频前会审核标题、描述和封面；provider_id 留空视为未开启审核，不会默认拒绝。"
+      },
       "provider_id": {
-        "description": "多模态审核Provider；留空使用当前会话Provider，无可用Provider时拒绝",
+        "description": "多模态审核Provider；仅在 enable_content_review=true 且选择了 Provider 时使用。留空视为不开启审核。",
         "type": "string",
         "default": "",
         "_special": "select_provider"

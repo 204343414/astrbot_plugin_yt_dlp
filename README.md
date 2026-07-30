@@ -90,3 +90,28 @@ HTTP Error 412: Precondition Failed
 2. 清洗 URL，仅保留 `https://www.bilibili.com/video/BV.../`；插件会自动做一次清洗；
 3. 在 `cookies.bilibili` 配置 B站 cookies；
 4. 稍后重试或更换出口网络。
+
+## 访问控制与审核
+
+### 公开国内平台模式
+
+`access_control.public_domestic_only` 默认开启。开启后：
+
+- 普通用户可以下载国内平台，例如 Bilibili、抖音、微博、小红书等；
+- YouTube、X/Twitter、Pornhub 等国外或高风险站点，以及未知的非国内站点，只允许 AstrBot 管理员、`operator_openids`、`allowed_group_openids` 或 `allowed_qqofficial_instance_ids` 命中的上下文使用；
+- 字幕组操作员、管理员和白名单群不受公开模式限制。
+
+如果关闭 `public_domestic_only`，则所有下载都要求管理员、操作员或白名单上下文。
+
+### 国外视频审核
+
+`moderation.enable_content_review` 默认关闭。关闭时不会调用审核模型。
+
+只有同时满足以下条件时才会在下载国外视频前审核标题、描述和封面：
+
+1. `moderation.enable_content_review = true`
+2. `moderation.provider_id` 选择了可用多模态 Provider
+3. 当前下载者是管理员、操作员或白名单上下文
+4. 视频来源不是国内平台
+
+`provider_id` 留空会被视为未开启审核，不会默认拒绝下载。
