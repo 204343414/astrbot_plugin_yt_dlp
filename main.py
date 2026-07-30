@@ -34,7 +34,7 @@ if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.4.1",
+    "4.4.2",
     "",
 )
 class YtDlpPlugin(Star):
@@ -256,10 +256,18 @@ class YtDlpPlugin(Star):
         text = html.unescape(str(text or "").strip())
         if not text:
             return ""
-        match = re.search(r'https?://[^\s<>\'"`]+', text, flags=re.I)
-        if not match:
-            return ""
-        url = match.group(0).strip()
+
+        # Prefer Markdown link targets. In "[https://a](https://a)" the label is
+        # also a URL; matching the target first avoids swallowing "](https://...)".
+        markdown_match = re.search(r"\[[^\]]*\]\((https?://[^\s)]+)\)", text, flags=re.I)
+        if markdown_match:
+            url = markdown_match.group(1).strip()
+        else:
+            match = re.search(r"https?://[^\s<>\[\](){}\'\"`]+", text, flags=re.I)
+            if not match:
+                return ""
+            url = match.group(0).strip()
+
         # Strip common wrappers/trailing punctuation from Markdown, IM quote
         # markers and Chinese share text. Keep query delimiters inside the URL.
         trailing = "\r\n\t .,，。!！?？;；]})）】》>。"
@@ -930,13 +938,13 @@ class YtDlpPlugin(Star):
                 asyncio.create_task(self._cleanup_task(task_id, delay=1))
 
     @filter.command("video")
-    async def video(self, event: AstrMessageEvent, url: GreedyStr = ""):
+    async def video(self, event: AstrMessageEvent, url: GreedyStr):
         """下载单视频并作为 QQ 视频消息发送；可从分享文案中自动提取链接。"""
         async for result in self._handle(event, url, as_file=False):
             yield result
 
     @filter.command("download")
-    async def download(self, event: AstrMessageEvent, url: GreedyStr = ""):
+    async def download(self, event: AstrMessageEvent, url: GreedyStr):
         """下载单视频并作为 QQ 文件消息发送；可从分享文案中自动提取链接。"""
         async for result in self._handle(event, url, as_file=True):
             yield result

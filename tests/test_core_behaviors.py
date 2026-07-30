@@ -130,6 +130,14 @@ class CoreBehaviorTests(unittest.TestCase):
             "https://www.youtube.com/watch?v=abc123",
         )
 
+
+    def test_extract_first_url_from_b23_markdown_share_text(self):
+        text = "【影   流   之   主-哔哩哔哩】 ++[https://b23.tv/GlngRIZ](https://b23.tv/GlngRIZ)++"
+        self.assertEqual(
+            self.mod.YtDlpPlugin._extract_first_url(text),
+            "https://b23.tv/GlngRIZ",
+        )
+
     def test_extract_first_url_from_markdown_and_unescape(self):
         text = "[标题](https://www.bilibili.com/video/BV1xx/?a=1&amp;b=2)。"
         self.assertEqual(
