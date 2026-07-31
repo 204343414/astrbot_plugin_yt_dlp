@@ -34,7 +34,7 @@ if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.4.3",
+    "4.5.0",
     "",
 )
 class YtDlpPlugin(Star):
@@ -70,6 +70,12 @@ class YtDlpPlugin(Star):
         self.prefer_h264 = bool(download.get("prefer_h264", True))
         self.max_concurrent = max(int(download.get("max_concurrent", 1)), 1)
         self._download_semaphore = asyncio.Semaphore(self.max_concurrent)
+
+        media_relay = config.get("media_relay", {}) or {}
+        self.media_relay_enabled = bool(media_relay.get("enabled", True))
+        self.media_relay_max_video_mb = min(
+            max(int(media_relay.get("max_video_mb", 30)), 1), 30
+        )
 
         cookies = config.get("cookies", {}) or {}
         self.bilibili_cookies = str(cookies.get("bilibili", "") or "").strip()
@@ -947,6 +953,82 @@ class YtDlpPlugin(Star):
                     error_text = f"{stage}阶段失败：{error_text}"
                 yield event.plain_result(f"❌ 处理失败：{error_text}")
                 asyncio.create_task(self._cleanup_task(task_id, delay=1))
+
+    def _iter_message_components(self, event: AstrMessageEvent):
+        stack = list(event.get_messages() or [])
+        while stack:
+            component = stack.pop(0)
+            yield component
+            comp_type = str(getattr(component, "type", "") or "")
+            if comp_type.endswith("Reply") or comp_type.lower() == "reply":
+                stack.extend(list(getattr(component, "chain", None) or []))
+
+    async def _resolve_attached_video_path(self, event: AstrMessageEvent, task_id: str) -> tuple[Path, str]:
+        for component in self._iter_message_components(event):
+            try:
+                if isinstance(component, Video):
+                    source_path = await component.convert_to_file_path()
+                    name = Path(source_path).name or "video.mp4"
+                elif isinstance(component, File):
+                    name = str(component.name or "") or "video.mp4"
+                    # Force local download instead of returning URL so QQ Official
+                    # can use the reliable chunked upload path.
+                    source_path = await component.get_file(allow_return_url=False)
+                else:
+                    continue
+            except Exception as exc:
+                logger.warning("[yt-dlp] 附件解析失败: %s", exc)
+                continue
+
+            if not source_path or not Path(source_path).exists():
+                continue
+            src = Path(source_path)
+            suffix = src.suffix or Path(name).suffix or ".mp4"
+            local = self.temp_dir / f"{task_id}_relay{suffix}"
+            if src.resolve() != local.resolve():
+                import shutil
+                shutil.copyfile(src, local)
+            return local, name
+        raise ValueError("未找到可转换的视频/文件附件；请在消息中附带 mp4，或回复一条 mp4 文件/视频后发送 /转视频")
+
+    @filter.command("转视频", alias={"文件转视频", "media2video"})
+    async def relay_attached_video(self, event: AstrMessageEvent):
+        """把当前消息或引用消息里的 mp4 文件转成 QQ 官方视频媒体消息。"""
+        event.stop_event()
+        if not self.media_relay_enabled:
+            yield event.plain_result("文件转视频功能未启用。")
+            return
+        if not self._is_qq_official_event(event):
+            yield event.plain_result("/转视频 目前仅支持 QQ 官方群聊。")
+            return
+        if not self._has_privileged_download_access(event):
+            yield self._deny_download_access(event, "文件转视频仅限 AstrBot 管理员、字幕组操作员或白名单群使用。")
+            return
+
+        task_id = f"{int(time.time() * 1000)}_relay"
+        try:
+            path, name = await self._resolve_attached_video_path(event, task_id)
+            if path.suffix.lower() != ".mp4" and not str(name).lower().endswith(".mp4"):
+                raise ValueError("仅支持 mp4 文件转为 QQ 视频媒体。")
+            size_mb = path.stat().st_size / 1024 / 1024
+            if size_mb > self.media_relay_max_video_mb:
+                raise ValueError(
+                    f"视频文件 {size_mb:.1f}MB，超过 QQ 官方视频媒体安全上限 {self.media_relay_max_video_mb}MB。"
+                )
+            sent_as = await self._send_qq_official_media(
+                event,
+                path,
+                title=self._safe_filename(Path(name).stem or "video"),
+                as_file=False,
+            )
+            if sent_as != "video":
+                raise RuntimeError("内部错误：文件未按视频媒体发送")
+            logger.info("[yt-dlp] 文件转视频发送成功 size=%.1fMB name=%s", size_mb, name)
+        except Exception as exc:
+            logger.error("[yt-dlp] 文件转视频失败: %s", exc)
+            yield event.plain_result(f"❌ 转视频失败：{exc}")
+        finally:
+            asyncio.create_task(self._cleanup_task(task_id, delay=1))
 
     @filter.command("video")
     async def video(self, event: AstrMessageEvent, url: GreedyStr):

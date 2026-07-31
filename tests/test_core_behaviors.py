@@ -27,7 +27,7 @@ def load_plugin_module():
     class AstrMessageEvent: pass
     class Filter:
         @staticmethod
-        def command(_name):
+        def command(_name, **_kwargs):
             def deco(func):
                 return func
             return deco
@@ -42,7 +42,11 @@ def load_plugin_module():
     class Video:
         def __init__(self, file=None):
             self.file = file
+    class Reply:
+        def __init__(self, chain=None):
+            self.chain = chain or []
     comp_mod.File = File
+    comp_mod.Reply = Reply
     comp_mod.Video = Video
 
     star_mod = types.ModuleType("astrbot.api.star")

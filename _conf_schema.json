@@ -66,6 +66,25 @@
       }
     }
   },
+  "media_relay": {
+    "description": "文件转视频媒体",
+    "type": "object",
+    "hint": "把用户发给 Bot 的 mp4 文件/视频附件转成 QQ 官方视频媒体消息。仅 QQ 官方群聊、管理员/操作员/白名单群可用；超过30MB拒绝，不走群文件。",
+    "items": {
+      "enabled": {
+        "description": "启用 /转视频",
+        "type": "bool",
+        "default": true
+      },
+      "max_video_mb": {
+        "description": "最大视频媒体 MB",
+        "type": "int",
+        "default": 30,
+        "min": 1,
+        "hint": "QQ 官方视频软限制为 30MB；本配置在代码中封顶 30。"
+      }
+    }
+  },
   "ffmpeg": {
     "description": "FFmpeg设置",
     "type": "object",
