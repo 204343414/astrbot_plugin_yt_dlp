@@ -22,6 +22,8 @@
 
 在 AstrBot 插件配置页调整 `_conf_schema.json` 暴露的字段即可。
 
+> 本仓库主分支名是 `master`。`metadata.yaml` 已显式使用 `/tree/master`，避免 AstrBot 在 GitHub 默认分支查询失败时回退下载不存在的 `main.zip`。如果旧版更新时报 `refs/heads/main 404`，请先按下方排错说明修正一次已安装插件的仓库地址。
+
 ### yt-dlp 依赖自动更新
 
 - `dependency.auto_update_yt_dlp_on_error`：默认开启。仅在“解析视频信息”或“下载与封装”阶段失败时检查版本；QQ 上传失败不会触发依赖更新。
@@ -80,6 +82,23 @@ Bilibili 412 通常是风控/登录态/指纹问题；配置 cookies 能提高�
 插件不会再让 AstrBot 当前 qq_official 适配器读取本地视频并转 base64，因此可避开 base64 JSON 请求体过大的 413 问题。
 
 ## 排错
+
+如果在 AstrBot 面板更新插件时遇到：
+
+```text
+.../zip/refs/heads/main 404 Not Found
+```
+
+原因是本仓库分支名为 `master`，而 AstrBot 获取 GitHub 默认分支失败后回退到了 `main`。旧版需要先把服务器上的
+`/AstrBot/data/plugins/astrbot_plugin_yt_dlp/metadata.yaml` 中 `repo` 改为：
+
+```yaml
+repo: "https://github.com/204343414/astrbot_plugin_yt_dlp/tree/master"
+```
+
+保存后重载插件（或重启 AstrBot），再点更新。也可以直接使用
+`https://github.com/204343414/astrbot_plugin_yt_dlp/archive/refs/heads/master.zip`
+手动覆盖安装。新版元数据已显式固定 `master`，以后不再依赖默认分支查询。
 
 失败消息会包含阶段，例如：
 

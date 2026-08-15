@@ -8,4 +8,6 @@ version: 4.5.1
 # 作者
 author: ハ七
 # 插件的仓库地址
-repo: "https://github.com/204343414/astrbot_plugin_yt_dlp"
+# 显式指定 master：AstrBot 获取 GitHub 默认分支失败时会回退到 main，
+# 但本仓库的默认分支名为 master，会导致插件更新下载 main.zip 返回 404。
+repo: "https://github.com/204343414/astrbot_plugin_yt_dlp/tree/master"
