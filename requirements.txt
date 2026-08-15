@@ -1,4 +1,4 @@
-yt-dlp
+yt-dlp>=2026.7.4
 imageio-ffmpeg
 requests
 aiohttp

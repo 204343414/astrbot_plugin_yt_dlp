@@ -305,5 +305,78 @@ class CoreBehaviorTests(unittest.TestCase):
         event = self.make_event_shell(group="group")
         self.assertTrue(plugin._has_privileged_download_access(event))
 
+    def test_yt_dlp_date_versions_are_compared_numerically(self):
+        key = self.mod.YtDlpPlugin._version_key
+        self.assertLess(key("2025.12.8"), key("2026.1.2"))
+        self.assertEqual(key("stable@2026.07.04"), (2026, 7, 4))
+
+    def test_403_note_explains_when_yt_dlp_is_already_latest(self):
+        plugin = self.make_plugin_shell()
+        plugin.yt_dlp_auto_update = True
+        plugin._get_yt_dlp_version = lambda: "2026.7.4"
+
+        async def fake_check():
+            return {"status": "latest", "current": "2026.7.4", "latest": "2026.7.4"}
+
+        plugin._check_and_update_yt_dlp = fake_check
+        note = asyncio.run(
+            plugin._yt_dlp_failure_note(
+                "下载与封装", "HTTP Error 403: Forbidden"
+            )
+        )
+        self.assertIn("PyPI 最新稳定版", note)
+        self.assertIn("Cookies", note)
+        self.assertIn("出口 IP", note)
+
+    def test_outdated_yt_dlp_is_upgraded_and_result_is_cached(self):
+        plugin = self.make_plugin_shell()
+        plugin.proxy_enabled = False
+        plugin.proxy_url = ""
+        plugin.yt_dlp_update_check_interval = 1800
+        plugin._yt_dlp_update_lock = asyncio.Lock()
+        plugin._last_yt_dlp_update_check = 0.0
+        plugin._last_yt_dlp_update_result = None
+        plugin._get_yt_dlp_version = lambda: "2025.1.1"
+        calls = {"fetch": 0, "upgrade": 0}
+
+        async def fake_fetch():
+            calls["fetch"] += 1
+            return "2026.7.4"
+
+        def fake_upgrade(expected):
+            calls["upgrade"] += 1
+            self.assertEqual(expected, "2026.7.4")
+            return "2026.7.4"
+
+        plugin._fetch_latest_yt_dlp_version = fake_fetch
+        plugin._upgrade_yt_dlp_with_pip = fake_upgrade
+
+        async def run_twice():
+            first = await plugin._check_and_update_yt_dlp()
+            second = await plugin._check_and_update_yt_dlp()
+            return first, second
+
+        first, second = asyncio.run(run_twice())
+        self.assertEqual(first["status"], "updated")
+        self.assertEqual(second, first)
+        self.assertEqual(calls, {"fetch": 1, "upgrade": 1})
+
+    def test_upload_failure_does_not_trigger_yt_dlp_update_check(self):
+        plugin = self.make_plugin_shell()
+        plugin.yt_dlp_auto_update = True
+        called = False
+
+        async def fake_check():
+            nonlocal called
+            called = True
+            return {}
+
+        plugin._check_and_update_yt_dlp = fake_check
+        note = asyncio.run(
+            plugin._yt_dlp_failure_note("QQ官方分片上传与发送", "HTTP 500")
+        )
+        self.assertEqual(note, "")
+        self.assertFalse(called)
+
 if __name__ == "__main__":
     unittest.main()
