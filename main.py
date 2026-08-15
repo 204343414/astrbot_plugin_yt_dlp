@@ -6,7 +6,10 @@ import os
 import random
 import re
 import shutil
+import subprocess
+import sys
 import time
+from importlib import metadata as importlib_metadata
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
@@ -27,14 +30,18 @@ except Exception:  # pragma: no cover - test/lightweight environments
 PLUGIN_NAME = "astrbot_plugin_yt_dlp"
 
 if not hasattr(builtins, "_ASTRBOT_YTDLP_RUNTIME"):
-    builtins._ASTRBOT_YTDLP_RUNTIME = {"generation": 0, "instance": None}
+    builtins._ASTRBOT_YTDLP_RUNTIME = {
+        "generation": 0,
+        "instance": None,
+        "yt_dlp_restart_required": False,
+    }
 
 
 @register(
     "astrbot_plugin_yt_dlp",
     "ハ七",
     "QQ官方Bot单视频下载与本地富媒体上传",
-    "4.5.0",
+    "4.5.1",
     "",
 )
 class YtDlpPlugin(Star):
@@ -51,6 +58,20 @@ class YtDlpPlugin(Star):
         proxy = config.get("proxy", {}) or {}
         self.proxy_enabled = bool(proxy.get("enabled", False))
         self.proxy_url = str(proxy.get("url", "") or "").strip()
+
+        dependency = config.get("dependency", {}) or {}
+        self.yt_dlp_auto_update = bool(
+            dependency.get("auto_update_yt_dlp_on_error", True)
+        )
+        self.yt_dlp_update_check_interval = max(
+            int(dependency.get("update_check_interval_minutes", 30)), 1
+        ) * 60
+        self._yt_dlp_update_lock = asyncio.Lock()
+        self._last_yt_dlp_update_check = 0.0
+        self._last_yt_dlp_update_result = None
+        self._yt_dlp_restart_required = bool(
+            builtins._ASTRBOT_YTDLP_RUNTIME.get("yt_dlp_restart_required", False)
+        )
 
         download = config.get("download", {}) or {}
         self.max_quality = str(download.get("max_quality", "1080p"))
@@ -120,7 +141,7 @@ class YtDlpPlugin(Star):
         self._runtime_generation = runtime["generation"]
         runtime["instance"] = self
         logger.info(
-            "[yt-dlp] 已加载：temp=%s quality=%s generic_max=%dMB qq_max=%dMB qq_video_soft=%dMB operators=%d allowed_groups=%d allowed_instances=%d public_domestic_only=%s review=%s",
+            "[yt-dlp] 已加载：temp=%s quality=%s generic_max=%dMB qq_max=%dMB qq_video_soft=%dMB operators=%d allowed_groups=%d allowed_instances=%d public_domestic_only=%s review=%s yt_dlp=%s auto_update=%s",
             self.temp_dir,
             self.max_quality,
             self.max_size_mb,
@@ -131,6 +152,8 @@ class YtDlpPlugin(Star):
             len(self.allowed_platform_instance_ids),
             self.public_domestic_only,
             self.enable_content_review and bool(self.moderation_provider_id),
+            self._get_yt_dlp_version(),
+            self.yt_dlp_auto_update,
         )
 
     def _is_current_runtime(self) -> bool:
@@ -167,6 +190,198 @@ class YtDlpPlugin(Star):
         if system:
             return system
         return "ffmpeg"
+
+    @staticmethod
+    def _get_yt_dlp_version() -> str:
+        """Return the version of the code loaded by this AstrBot process."""
+        # Prefer the already-imported module over distribution metadata. After a
+        # successful pip upgrade, metadata points at the new files while this
+        # process intentionally keeps using its safely loaded old modules until
+        # AstrBot is restarted.
+        loaded = getattr(getattr(yt_dlp, "version", None), "__version__", "")
+        if loaded:
+            return str(loaded)
+        try:
+            return str(importlib_metadata.version("yt-dlp"))
+        except Exception:
+            return "unknown"
+
+    @staticmethod
+    def _version_key(version: str) -> tuple[int, ...]:
+        """Build a comparison key for yt-dlp's date-based versions."""
+        return tuple(int(part) for part in re.findall(r"\d+", str(version or ""))[:5])
+
+    async def _fetch_latest_yt_dlp_version(self) -> str:
+        timeout = aiohttp.ClientTimeout(total=10, connect=5)
+        request_kwargs = {}
+        if self.proxy_enabled and self.proxy_url:
+            request_kwargs["proxy"] = self.proxy_url
+        async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
+            async with session.get(
+                "https://pypi.org/pypi/yt-dlp/json", **request_kwargs
+            ) as response:
+                if response.status != 200:
+                    raise RuntimeError(f"PyPI 返回 HTTP {response.status}")
+                payload = await response.json(content_type=None)
+        latest = str((payload.get("info") or {}).get("version") or "").strip()
+        if not self._version_key(latest):
+            raise RuntimeError("PyPI 未返回有效版本号")
+        return latest
+
+    @staticmethod
+    def _upgrade_yt_dlp_with_pip(expected_version: str) -> str:
+        """Upgrade the package used by the running interpreter.
+
+        The imported yt_dlp module is deliberately not reloaded here. Reloading a
+        package with many already-imported submodules can produce a mixed old/new
+        runtime. The caller tells the operator to restart AstrBot instead.
+        """
+        command = [
+            sys.executable,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-input",
+            "--upgrade",
+            "yt-dlp",
+        ]
+        completed = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(f"pip 退出码 {completed.returncode}")
+
+        probe = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from importlib.metadata import version; print(version('yt-dlp'))",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        installed = probe.stdout.strip().splitlines()[-1] if probe.returncode == 0 and probe.stdout.strip() else ""
+        if not installed:
+            raise RuntimeError("pip 已完成，但无法确认安装版本")
+        if YtDlpPlugin._version_key(installed) < YtDlpPlugin._version_key(expected_version):
+            raise RuntimeError("pip 未安装 PyPI 最新版本")
+        return installed
+
+    async def _check_and_update_yt_dlp(self) -> dict:
+        """Check PyPI at most once per configured interval and upgrade if needed."""
+        lock = getattr(self, "_yt_dlp_update_lock", None)
+        if lock is None:
+            lock = self._yt_dlp_update_lock = asyncio.Lock()
+        async with lock:
+            now = time.monotonic()
+            interval = getattr(self, "yt_dlp_update_check_interval", 30 * 60)
+            cached = getattr(self, "_last_yt_dlp_update_result", None)
+            last_check = getattr(self, "_last_yt_dlp_update_check", 0.0)
+            if cached is not None and now - last_check < interval:
+                return cached
+
+            current = self._get_yt_dlp_version()
+            try:
+                latest = await self._fetch_latest_yt_dlp_version()
+            except Exception as exc:
+                logger.warning("[yt-dlp] 最新版本检测失败: %s", exc)
+                result = {
+                    "status": "check_failed",
+                    "current": current,
+                    "reason": type(exc).__name__,
+                }
+            else:
+                current_key = self._version_key(current)
+                if current_key and current_key >= self._version_key(latest):
+                    result = {
+                        "status": "latest",
+                        "current": current,
+                        "latest": latest,
+                    }
+                else:
+                    try:
+                        installed = await asyncio.get_running_loop().run_in_executor(
+                            None, self._upgrade_yt_dlp_with_pip, latest
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "[yt-dlp] 自动升级失败: current=%s latest=%s error=%s",
+                            current,
+                            latest,
+                            exc,
+                        )
+                        result = {
+                            "status": "update_failed",
+                            "current": current,
+                            "latest": latest,
+                            "reason": type(exc).__name__,
+                        }
+                    else:
+                        # Persist this flag across plugin hot reloads in the same
+                        # process. A full AstrBot restart recreates builtins state.
+                        self._yt_dlp_restart_required = True
+                        builtins._ASTRBOT_YTDLP_RUNTIME[
+                            "yt_dlp_restart_required"
+                        ] = True
+                        logger.info(
+                            "[yt-dlp] 已自动升级依赖: %s -> %s；等待 AstrBot 重启生效",
+                            current,
+                            installed,
+                        )
+                        result = {
+                            "status": "updated",
+                            "current": current,
+                            "latest": installed,
+                        }
+
+            self._last_yt_dlp_update_check = now
+            self._last_yt_dlp_update_result = result
+            return result
+
+    async def _yt_dlp_failure_note(self, stage: str, error_text: str) -> str:
+        if stage not in {"解析视频信息", "下载与封装"}:
+            return ""
+        current = self._get_yt_dlp_version()
+        if not getattr(self, "yt_dlp_auto_update", True):
+            return f"；当前 yt-dlp={current}，自动更新检测已关闭"
+
+        try:
+            result = await self._check_and_update_yt_dlp()
+        except Exception as exc:
+            # Dependency diagnostics must never replace the original download error.
+            logger.warning("[yt-dlp] 失败后的依赖诊断异常: %s", exc)
+            return f"；当前 yt-dlp={current}，自动版本检测执行失败"
+        status = result.get("status")
+        if status == "updated":
+            return (
+                f"；已自动把 yt-dlp 从 {result['current']} 升级到 {result['latest']}。"
+                "当前进程仍载入旧版代码，请重启 AstrBot 后重试"
+            )
+        if status == "update_failed":
+            return (
+                f"；检测到 yt-dlp {result['current']} 可升级至 {result['latest']}，"
+                "但自动升级失败，请在 AstrBot 的 Python 环境中手动执行 "
+                "python -m pip install -U yt-dlp 后重启"
+            )
+        if status == "latest":
+            note = f"；已检测：yt-dlp {result['current']} 是 PyPI 最新稳定版"
+            if "403" in error_text or "Forbidden" in error_text:
+                note += "，该 403 更可能来自源站风控、Cookies、代理/出口 IP 或媒体链接失效"
+            return note
+        return (
+            f"；当前 yt-dlp={result.get('current', current)}，但无法连接 PyPI 检测最新版"
+        )
 
     @staticmethod
     def _parse_values(value) -> set[str]:
@@ -849,6 +1064,11 @@ class YtDlpPlugin(Star):
         if not url.startswith(("http://", "https://")):
             yield event.plain_result("请提供包含 http/https 的单视频链接。")
             return
+        if getattr(self, "_yt_dlp_restart_required", False):
+            yield event.plain_result(
+                "yt-dlp 已完成自动升级；为避免混用新旧模块，请先重启整个 AstrBot 进程后再下载。"
+            )
+            return
 
         task_id = f"{int(time.time() * 1000)}_{hashlib_sha(url)}"
         size_mb = 0.0
@@ -930,8 +1150,16 @@ class YtDlpPlugin(Star):
                 asyncio.create_task(self._cleanup_task(task_id))
             except Exception as exc:
                 logger.error("[yt-dlp] 任务失败(stage=%s): %s", stage, exc)
-                error_text = str(exc) or type(exc).__name__
-                if "HTTP Error 412" in error_text and (
+                original_error = str(exc) or type(exc).__name__
+                dependency_note = await self._yt_dlp_failure_note(stage, original_error)
+                error_text = original_error
+                if "HTTP Error 403" in error_text or "403: Forbidden" in error_text:
+                    error_text = (
+                        "源站拒绝下载媒体数据（403 Forbidden）；错误发生在 QQ 上传前，"
+                        "通常与源站风控、登录态/Cookies、代理或出口 IP 有关。原始错误："
+                        + error_text
+                    )
+                elif "HTTP Error 412" in error_text and (
                     "BiliBili" in error_text or "bilibili" in url.lower()
                 ):
                     error_text = (
@@ -951,7 +1179,7 @@ class YtDlpPlugin(Star):
                     )
                 if "阶段失败" not in error_text:
                     error_text = f"{stage}阶段失败：{error_text}"
-                yield event.plain_result(f"❌ 处理失败：{error_text}")
+                yield event.plain_result(f"❌ 处理失败：{error_text}{dependency_note}")
                 asyncio.create_task(self._cleanup_task(task_id, delay=1))
 
     def _iter_message_components(self, event: AstrMessageEvent):

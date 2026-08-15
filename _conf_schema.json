@@ -15,6 +15,25 @@
       }
     }
   },
+  "dependency": {
+    "description": "yt-dlp 依赖维护",
+    "hint": "解析或下载失败时检测 PyPI 最新稳定版；旧版会自动通过当前 AstrBot 的 Python 环境升级。升级后必须重启 AstrBot，不能只热重载插件。",
+    "type": "object",
+    "items": {
+      "auto_update_yt_dlp_on_error": {
+        "description": "解析/下载失败时检测并自动升级 yt-dlp",
+        "type": "bool",
+        "default": true
+      },
+      "update_check_interval_minutes": {
+        "description": "失败后的版本检测间隔（分钟）",
+        "type": "int",
+        "default": 30,
+        "min": 1,
+        "hint": "用于避免多个失败请求反复访问 PyPI 或执行 pip；检测结果会在该时间内复用。"
+      }
+    }
+  },
   "download": {
     "description": "单视频下载与上传限制",
     "type": "object",

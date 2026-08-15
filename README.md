@@ -9,6 +9,7 @@
 - **视频/文件自动选择**：`/video` 下载结果不超过 QQ 官方视频软限制时按视频消息发送；超过软限制但不超过硬限制时按文件卡片发送。
 - **B站 URL 清洗与 Cookies**：自动清理 Bilibili `spm_id_from` / `trackid` / `vd_source` 等跟踪参数；支持在配置中粘贴 cookies.txt、Cookie 请求头，或填写 cookies 文件路径。
 - **单次结果输出**：成功只发送目标媒体；失败只返回一条错误文本，并标出失败阶段，节省 QQ 官方 Bot 消息频次。
+- **yt-dlp 失败自检更新**：解析或下载失败时检查 PyPI 最新稳定版；发现旧版会自动升级，并明确提示重启 AstrBot 后重试。检测有冷却时间，不会因连续失败反复运行 `pip`。
 
 ## 指令
 
@@ -20,6 +21,16 @@
 ## ⚙️ 关键配置
 
 在 AstrBot 插件配置页调整 `_conf_schema.json` 暴露的字段即可。
+
+> 本仓库主分支名是 `master`。`metadata.yaml` 已显式使用 `/tree/master`，避免 AstrBot 在 GitHub 默认分支查询失败时回退下载不存在的 `main.zip`。如果旧版更新时报 `refs/heads/main 404`，请先按下方排错说明修正一次已安装插件的仓库地址。
+
+### yt-dlp 依赖自动更新
+
+- `dependency.auto_update_yt_dlp_on_error`：默认开启。仅在“解析视频信息”或“下载与封装”阶段失败时检查版本；QQ 上传失败不会触发依赖更新。
+- `dependency.update_check_interval_minutes`：版本检测冷却时间，默认 `30` 分钟。
+- 如果检测到旧版，插件会在 AstrBot 当前 Python 环境中执行等价于 `python -m pip install -U yt-dlp` 的升级。
+- **升级后要重启整个 AstrBot 进程**。只热重载插件可能继续使用内存中已导入的旧版 `yt_dlp`，插件不会冒险混合重载新旧子模块。
+- 若运行环境只读、权限不足或由系统包管理器托管，自动升级会保留原始下载错误并提示手动升级，不会掩盖真正的失败原因。
 
 ### 下载与 QQ 官方限制
 
@@ -72,11 +83,40 @@ Bilibili 412 通常是风控/登录态/指纹问题；配置 cookies 能提高�
 
 ## 排错
 
+如果在 AstrBot 面板更新插件时遇到：
+
+```text
+.../zip/refs/heads/main 404 Not Found
+```
+
+原因是本仓库分支名为 `master`，而 AstrBot 获取 GitHub 默认分支失败后回退到了 `main`。旧版需要先把服务器上的
+`/AstrBot/data/plugins/astrbot_plugin_yt_dlp/metadata.yaml` 中 `repo` 改为：
+
+```yaml
+repo: "https://github.com/204343414/astrbot_plugin_yt_dlp/tree/master"
+```
+
+保存后重载插件（或重启 AstrBot），再点更新。也可以直接使用
+`https://github.com/204343414/astrbot_plugin_yt_dlp/archive/refs/heads/master.zip`
+手动覆盖安装。新版元数据已显式固定 `master`，以后不再依赖默认分支查询。
+
 失败消息会包含阶段，例如：
 
 - `解析视频信息阶段失败`：通常是 yt-dlp、URL、cookies 或站点风控问题。
 - `下载与封装阶段失败`：通常是格式、FFmpeg、磁盘或大小限制问题。
 - `QQ官方分片上传与发送阶段失败`：通常是 QQ 上传接口、机器人权限、群/用户 OpenID、富媒体格式或容量限制问题。
+
+如果遇到：
+
+```text
+ERROR: unable to download video data: HTTP Error 403: Forbidden
+```
+
+这表示 `yt-dlp` 已经解析出媒体地址，但源站在实际取视频数据时拒绝了请求；它发生在 QQ 官方 Bot 上传之前，因此通常不是 QQ 上传接口导致。插件会先检查 `yt-dlp` 是否落后：
+
+- 若自动升级成功：重启 AstrBot 后再试；
+- 若已经是 PyPI 最新稳定版：优先检查目标站 Cookies/登录态、服务器出口 IP、代理一致性和站点临时风控，稍后重试；
+- 只有某一个视频失败时，也可能是该媒体签名地址已失效、地区限制或视频本身受限。
 
 如果遇到 B站：
 
